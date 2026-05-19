@@ -1,0 +1,35 @@
+{
+  "name": "kyrexi",
+  "version": "1.5.5",
+  "description": "Kyrexi AI — Your companion in the terminal and your code",
+  "type": "module",
+  "main": "kyrexi.js",
+  "bin": {
+    "kyrexi": "kyrexi.js"
+  },
+  "files": [
+    "kyrexi.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "kyrexi",
+    "ai",
+    "cli",
+    "terminal",
+    "companion",
+    "chat",
+    "llm",
+    "agentic",
+    "autonomous",
+    "auto-fix",
+    "debugger",
+    "developer-tools",
+    "gemini",
+    "interactive"
+  ],
+  "author": "Udhanika Dissnayaka",
+  "homepage": "https://kyrexi.udmodz.site"
+}
