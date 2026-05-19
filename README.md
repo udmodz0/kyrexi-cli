@@ -9,7 +9,7 @@
 [![Cloudflare](https://img.shields.io/badge/Cloudflare-Workers-F38020?style=for-the-badge&logo=cloudflare&logoColor=white)](https://workers.cloudflare.com)
 [![Vercel](https://img.shields.io/badge/Vercel-Ready-000000?style=for-the-badge&logo=vercel&logoColor=white)](https://vercel.com)
 
-[![Version](https://img.shields.io/badge/Version-3.5.0--agentic--pro-7c3aed?style=for-the-badge&logoColor=white)](https://github.com/udmodz0)
+[![Version](https://img.shields.io/badge/Version-3.7.0--agentic--ultra-7c3aed?style=for-the-badge&logoColor=white)](https://github.com/udmodz0)
 [![License](https://img.shields.io/badge/License-Apache--2.0-00d4ff?style=for-the-badge&logoColor=white)](https://github.com/udmodz0)
 [![Status](https://img.shields.io/badge/Status-Active-00ff88?style=for-the-badge&logoColor=white)](https://github.com/udmodz0)
 
@@ -32,43 +32,103 @@
 
 
 
+
+<img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif" width="100%">
+
+## ✨ What's New in v3.7 Ultra
+
+Kyrexi CLI was upgraded from the original Agentic Pro flow into a more complete developer terminal assistant.
+
+### 🎨 Visual & UX Updates
+- Added multi-theme terminal colors: **neon**, **fire**, **ocean**, **candy**, and **matrix**.
+- Added richer status boxes, better icons, cleaner prompt labels, and gradient branding.
+- Added `/compact` mode for cleaner output when working in small terminals.
+- Added persistent theme saving through `/config set theme <name>`.
+
+### 🧠 Agent Logic Updates
+- Stronger mission prompts for standard mode and fixer mode.
+- Added safer tool-call parsing for malformed JSON/tool blocks.
+- Added local session context tracking and `/context` + `/reset-context` controls.
+- Added local prompt history logging with `/history`.
+- Added `/tools` to show all available built-in and plugin tools.
+
+### 🔒 Safety Updates
+- Fixed the settings/backups directory initializer.
+- Added automatic file backups before destructive file edits where supported.
+- Added `/safe` mode to block high-risk actions like deletes and background commands.
+- Added dangerous shell command detection for commands such as `rm -rf`, `format`, `mkfs`, `shutdown`, and pipe-to-shell patterns.
+- Added `/trust <n>` for controlled pre-authorization instead of permanently enabling full agentic mode.
+- Tokens shown in `/config` are masked for privacy.
+
+### 🛠️ Developer Workflow Updates
+- Added `/doctor` to check Node.js version, settings folder, token status, auth verification, and chat API connection.
+- Added `/scan [path]` to quickly inspect project size, file count, and ignored folders.
+- Added `/backup [file]` to create backups manually and list recent backups.
+- Added `/pwd` and `/cd <path>` for smoother project navigation inside the CLI.
+- Added saved config support for theme and compact mode.
+
+### 🧩 Plugin & Tooling Updates
+- Keeps support for `kyrexi.tools.js` plugin loading.
+- Keeps existing tools: file read/write/edit, command execution, background commands, search, URL reading, HTTP requests, image generation, system info, copy/delete/append.
+- Adds better display of dangerous tools in `/tools`.
+
 ## <img src="https://media2.giphy.com/media/QssGEmpkyEOhBCb7e1/giphy.gif" width="30"> &nbsp;CLI Commands
 
 <div align="center">
 
 | Command | Action |
 |:---|:---|
-| `/chats` | List all active agent sessions |
-| `/delete` | Remove the current or a specific chat session |
-| `/agent` | Toggle **Autonomous Mode** on/off |
-| `/fix` | Auto-fix an error using tools (e.g. `/fix <error>`) |
-| `/clear` | Wipe terminal history and reset the branding |
-| `/login` | Force a secure re-authentication flow |
-| `/exit` | Gracefully terminate the Kyrexi session |
+| `/chats` / `/sessions` | List all active agent sessions |
+| `/delete [id]` | Remove the current or a specific chat session |
+| `/agent` / `/agentic` | Toggle **Autonomous Mode** on/off |
+| `/trust <n>` | Pre-authorize the next N dangerous tool actions |
+| `/fix <error>` | Auto-fix an error using tools |
+| `/init` / `/create` | Scaffold a new Kyrexi-powered project |
+| `/pwd` | Show current working directory |
+| `/cd <path>` | Change current working directory |
+| `/status` | Show mode, version, theme, memory usage, and paths |
+| `/theme [name]` | View/change theme: `neon`, `fire`, `ocean`, `candy`, `matrix` |
+| `/safe` | Toggle extra protection for dangerous actions |
+| `/debug` | Toggle debug logs |
+| `/history` | Show recent local prompt history |
+| `/tools` | List every built-in and plugin tool available to the agent |
+| `/doctor` | Run auth, server, Node.js, and chat API health checks |
+| `/compact` | Toggle compact terminal output mode |
+| `/context` | Show saved session context summary |
+| `/reset-context` | Clear saved session context summary |
+| `/config show` | Show current CLI config with masked token |
+| `/config set theme <name>` | Save preferred theme permanently |
+| `/backup [file]` | List backups or create a backup for a file |
+| `/scan [path]` | Scan project file count, folder count, size, and ignored folders |
+| `/clear` | Wipe terminal history and reset branding |
+| `/login` | Force secure re-authentication flow |
+| `/exit` / `/q` | Gracefully terminate the Kyrexi session |
 
 </div>
 
 <br/>
 
-> 💡 **Pro Tip:** Use the `--agentic` or `-a` flag when starting Kyrexi to enable Autonomous Mode by default!
+> 💡 **Pro Tip:** Use `--agentic` / `-a` for full autonomy, `--safe` for extra protection, `--resume` to continue your last session, and `KYREXI_THEME=fire kyrexi` to start with a theme.
 
 <img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif" width="100%">
 
 ## <img src="https://media.giphy.com/media/v1.Y2lkPTc5MGI3NjExM3N6Z2V6eW96N3N6Z2V6eW96N3N6Z2V6eW96N3N6Z2V6eW96JmVwPXYxX2ludGVybmFsX2dpZl9ieV9pZCZjdD1n/3o7TKVUn7iM8FMEU24/giphy.gif" width="30"> &nbsp;Autonomous Toolbox
 
-Kyrexi v3.5 Pro comes equipped with a suite of professional-grade tools:
+Kyrexi v3.7 Ultra comes equipped with a suite of professional-grade tools:
 
 - **📂 File System**: `list_dir`, `read_file`, `write_file`, `edit_file`, `multi_edit_file`
 - **💻 Execution**: `run_command`, `run_background_command`, `get_command_status`
 - **🔍 Research**: `search_files` (grep), `search_web` (DuckDuckGo), `read_url`
 - **🎨 Creativity**: `generate_image` (AI-powered visuals)
 - **🧠 Reasoning**: Built-in visual `<thinking>` process for transparency
+- **🩺 Health**: `/doctor`, `/status`, `/scan`, and `/config` for professional diagnostics
+- **🛡️ Safety**: safe mode, dangerous command blocking, manual backups, and pre-authorization controls
 
 <img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif" width="100%">
 
 ## 🛠️ Autonomous Auto-Fix
 
-Kyrexi v3.5 introduces a dedicated **Fixer** mode. Instead of just analyzing an error, Kyrexi will autonomously navigate your codebase to resolve it.
+Kyrexi v3.7 introduces a dedicated **Fixer** mode. Instead of just analyzing an error, Kyrexi will autonomously navigate your codebase to resolve it.
 
 ### The 4-Step Mission Protocol:
 1.  **🔍 Locate**: Scans your project directory to find the failing code.
@@ -178,6 +238,15 @@ kyrexi
 
 # Start the agent (Agentic Pro)
 kyrexi --agentic
+
+# Start with safe mode
+kyrexi --safe
+
+# Resume last session
+kyrexi --resume
+
+# Start with a custom theme
+KYREXI_THEME=matrix kyrexi
 
 # Auto-fix an error
 kyrexi fix "Error: Cannot find module './utils'"
