@@ -4,11 +4,12 @@
  * Built for Kyrexi AI | https://kyrexi.udmodz.site
  * @license Apache-2.0
  * Copyright 2020-2026 UDMODZ
+ * Edited and adavced by THENUX
  */
 
 import { createServer } from 'node:http';
-import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, appendFileSync } from 'node:fs';
-import { join, relative, resolve, dirname } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync, readdirSync, statSync, appendFileSync, copyFileSync } from 'node:fs';
+import { join, relative, resolve, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import { createInterface } from 'node:readline';
 import { exec, spawn } from 'node:child_process';
@@ -22,12 +23,16 @@ const SETTINGS_PATH = join(KYREXI_DIR, 'settings.json');
 const HISTORY_PATH = join(KYREXI_DIR, 'history.log');
 const BASE_URL = process.env.KYREXI_BASE_URL || 'https://kyrexi.udmodz.site';
 const API_KEY_ENV = process.env.KYREXI_API_KEY;
-const VERSION = '1.0.0';
+const VERSION = '3.7.0';
 
 
 const args = process.argv.slice(2);
 let IS_AGENTIC = args.includes('--agentic') || args.includes('-a');
 let RESUME_SESSION = args.includes('--resume');
+let DEBUG_MODE = args.includes('--debug');
+let COMPACT_MODE = args.includes('--compact');
+let SAFE_MODE = args.includes('--safe');
+let CURRENT_THEME = process.env.KYREXI_THEME || 'neon';
 
 
 const NO_COLOR = !!process.env.NO_COLOR;
@@ -47,6 +52,11 @@ const c = {
   gray: (s) => NO_COLOR ? s : `\x1b[38;2;107;114;128m${s}\x1b[0m`,
   bgBrand: (s) => NO_COLOR ? s : `\x1b[48;2;34;211;160m\x1b[38;2;0;0;0m${s}\x1b[0m`,
   bgAccent: (s) => NO_COLOR ? s : `\x1b[48;2;139;92;246m\x1b[38;2;255;255;255m${s}\x1b[0m`,
+  pink: (s) => NO_COLOR ? s : `\x1b[38;2;236;72;153m${s}\x1b[0m`,
+  orange: (s) => NO_COLOR ? s : `\x1b[38;2;249;115;22m${s}\x1b[0m`,
+  lime: (s) => NO_COLOR ? s : `\x1b[38;2;132;204;22m${s}\x1b[0m`,
+  white: (s) => NO_COLOR ? s : `\x1b[38;2;245;245;245m${s}\x1b[0m`,
+  inverse: (s) => NO_COLOR ? s : `\x1b[7m${s}\x1b[0m`,
 };
 
 function createGradient(colors) {
@@ -78,6 +88,192 @@ function createGradient(colors) {
   };
 }
 
+
+const THEMES = {
+  neon: ["#22d3ee", "#8b5cf6", "#22d3a0"],
+  fire: ["#f97316", "#ef4444", "#facc15"],
+  ocean: ["#0ea5e9", "#06b6d4", "#14b8a6"],
+  candy: ["#ec4899", "#a855f7", "#22d3ee"],
+  matrix: ["#22c55e", "#84cc16", "#16a34a"],
+};
+
+function themeColors() {
+  return THEMES[CURRENT_THEME] || THEMES.neon;
+}
+
+function gradientText(text, theme = CURRENT_THEME) {
+  return createGradient(THEMES[theme] || themeColors())(text);
+}
+
+function nowStamp() {
+  return new Date().toISOString().replace('T', ' ').replace(/\.\d+Z$/, ' UTC');
+}
+
+function logDebug(...parts) {
+  if (DEBUG_MODE) console.log(c.dim(c.gray(`[debug ${nowStamp()}] ${parts.join(' ')}`)));
+}
+
+function ensureKyrexiDirs() {
+  if (!existsSync(KYREXI_DIR)) mkdirSync(KYREXI_DIR, { recursive: true });
+  const backups = join(KYREXI_DIR, 'backups');
+  if (!existsSync(backups)) mkdirSync(backups, { recursive: true });
+}
+
+function backupFile(filePath) {
+  try {
+    ensureKyrexiDirs();
+    if (!existsSync(filePath) || !statSync(filePath).isFile()) return null;
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const target = join(KYREXI_DIR, 'backups', `${basename(filePath)}.${stamp}.bak`);
+    copyFileSync(filePath, target);
+    return target;
+  } catch (e) {
+    logDebug('backup failed:', e.message);
+    return null;
+  }
+}
+
+function listBackups(limit = 20) {
+  try {
+    ensureKyrexiDirs();
+    const dir = join(KYREXI_DIR, 'backups');
+    return readdirSync(dir)
+      .map(name => ({ name, path: join(dir, name), time: statSync(join(dir, name)).mtimeMs, size: statSync(join(dir, name)).size }))
+      .sort((a, b) => b.time - a.time)
+      .slice(0, limit);
+  } catch (e) {
+    logDebug('list backups failed:', e.message);
+    return [];
+  }
+}
+
+function readSettingsSafe() {
+  return safeJsonParse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}', {}) || {};
+}
+
+function writeSettingsSafe(next) {
+  ensureKyrexiDirs();
+  writeFileSync(SETTINGS_PATH, JSON.stringify(next, null, 2));
+}
+
+function maskSecret(value = '') {
+  const s = String(value || '');
+  if (!s) return '(empty)';
+  if (s.length <= 8) return '********';
+  return `${s.slice(0, 4)}...${s.slice(-4)}`;
+}
+
+async function runDoctor(client, token) {
+  const checks = [];
+  const add = (name, ok, detail = '') => checks.push(`${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`);
+  add('Node.js runtime', Number(process.versions.node.split('.')[0]) >= 18, `v${process.versions.node}`);
+  add('Settings directory', existsSync(KYREXI_DIR), KYREXI_DIR);
+  add('API token', !!token, maskSecret(token));
+  add('Current directory', existsSync(CURRENT_CWD), CURRENT_CWD);
+  try {
+    const res = await fetch(`${BASE_URL}/api/auth/verify?token=${token}`, { headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` } });
+    add('Server auth verify', res.ok, `${res.status}`);
+  } catch (e) {
+    add('Server auth verify', false, e.message);
+  }
+  try {
+    const chats = await client.listChats();
+    add('Chat API', Array.isArray(chats), `${Array.isArray(chats) ? chats.length : 0} sessions visible`);
+  } catch (e) {
+    add('Chat API', false, e.message);
+  }
+  return checks.join('\n');
+}
+
+function appendHistory(role, text) {
+  try {
+    ensureKyrexiDirs();
+    appendFileSync(HISTORY_PATH, `\n[${nowStamp()}] ${role}\n${String(text).slice(0, 6000)}\n`, 'utf8');
+  } catch (e) {
+    logDebug('history write failed:', e.message);
+  }
+}
+
+function trimForTerminal(text, max = 16000) {
+  const s = String(text ?? '');
+  if (s.length <= max) return s;
+  return `${s.slice(0, max)}\n\n[Kyrexi trimmed ${s.length - max} characters for terminal safety]`;
+}
+
+function safeJsonParse(text, fallback = null) {
+  try { return JSON.parse(text); } catch { return fallback; }
+}
+
+function parseToolCall(rawCall) {
+  let rawJson = rawCall.trim().replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
+  let sanitizedJson = '';
+  let inString = false;
+  let escaped = false;
+  for (let i = 0; i < rawJson.length; i++) {
+    const char = rawJson[i];
+    if (char === '"' && !escaped) { inString = !inString; sanitizedJson += char; }
+    else if (char === '\\' && inString && !escaped) { escaped = true; sanitizedJson += char; }
+    else {
+      if (inString) {
+        if (char === '\n') sanitizedJson += '\\n';
+        else if (char === '\r') sanitizedJson += '\\r';
+        else if (char === '\t') sanitizedJson += '\\t';
+        else sanitizedJson += char;
+      } else sanitizedJson += char;
+      escaped = false;
+    }
+  }
+  const parsed = JSON.parse(sanitizedJson);
+  const call = {
+    name: parsed.name || parsed.tool || parsed.action || parsed.type,
+    parameters: parsed.parameters || parsed.args || parsed.params || parsed
+  };
+  if (call.name && call.parameters === parsed) {
+    const { name, tool, action, type, parameters, args, params, ...rest } = parsed;
+    call.parameters = rest;
+  }
+  const p = call.parameters || {};
+  if (p.param1 || p.param2) {
+    if (call.name === 'write_file') { p.path = p.param1; p.content = p.param2; }
+    if (call.name === 'run_command') p.command = p.param1;
+    if (call.name === 'list_dir') p.path = p.param1;
+  }
+  call.parameters = p;
+  return call;
+}
+
+function isCommandDangerous(command = '') {
+  const normalized = String(command).toLowerCase();
+  return /\b(rm\s+-rf|del\s+\/|format\b|mkfs\b|shutdown\b|reboot\b|sudo\b|chmod\s+777|curl\s+.*\|\s*sh|wget\s+.*\|\s*sh)\b/.test(normalized);
+}
+
+function validateToolCall(name, parameters = {}) {
+  if (!name) return { ok: false, reason: 'Missing tool name.' };
+  if (SAFE_MODE && ['delete_file', 'run_background_command'].includes(name)) {
+    return { ok: false, reason: `SAFE_MODE blocked ${name}.` };
+  }
+  if (name === 'run_command' && isCommandDangerous(parameters.command)) {
+    return { ok: false, reason: 'Dangerous shell command blocked. Use a safer command or disable SAFE_MODE only if you trust the action.' };
+  }
+  return { ok: true };
+}
+
+function formatBytes(bytes) {
+  const n = Number(bytes) || 0;
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let value = n, i = 0;
+  while (value >= 1024 && i < units.length - 1) { value /= 1024; i++; }
+  return `${value.toFixed(i ? 1 : 0)} ${units[i]}`;
+}
+
+function usageMeter(label, used, total) {
+  const width = 24;
+  const pct = total ? Math.min(1, used / total) : 0;
+  const filled = Math.round(pct * width);
+  const bar = `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`;
+  return `${label}: ${bar} ${(pct * 100).toFixed(0)}%`;
+}
+
 const ICONS = {
   robot: '🤖',
   think: '🧠',
@@ -89,11 +285,32 @@ const ICONS = {
   lock: '🔒',
   plus: '➕',
   minus: '➖',
+  error: '❌',
+  info: 'ℹ️',
+  spark: '✨',
+  folder: '📁',
+  file: '📄',
+  clock: '⏱️',
 };
 
 
-const mission1 = `MISSION: STANDARD AUTONOMY`;
-const mission2 = `MISSION: ERROR RESOLUTION`;
+const mission1 = `MISSION: STANDARD AUTONOMY
+You are Kyrexi CLI's terminal-native coding agent.
+Rules:
+- Keep answers practical, concise, and production-ready.
+- Use tools when needed, but explain important destructive actions.
+- Prefer safe edits: inspect files before modifying, create focused changes, run checks when possible.
+- When coding, return complete working code, not placeholders.
+- Never expose API keys, secrets, cookies, or tokens.
+- If unsure, gather context with list_dir/read_file/search_files before editing.`;
+const mission2 = `MISSION: ERROR RESOLUTION
+You are Kyrexi CLI's autonomous fixer.
+Rules:
+- Diagnose root cause first, then patch the minimal files needed.
+- Run or suggest verification commands after fixing.
+- Preserve existing behavior unless the user requests a redesign.
+- Avoid destructive commands. Never delete user data unless explicitly requested.
+- Summarize what changed and why.`;
 
 
 const backgroundProcesses = new Map();
@@ -122,30 +339,33 @@ const Tools = {
       const fullPath = resolve(CURRENT_CWD, path);
       const dir = dirname(fullPath);
       if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+      const backup = backupFile(fullPath);
       writeFileSync(fullPath, content, 'utf8');
-      return `Successfully created/updated ${path} (${content.length} bytes)`;
+      return `Successfully created/updated ${path} (${content.length} bytes)${backup ? `\nBackup: ${backup}` : ''}`;
     } catch (e) { return `Error: ${e.message}`; }
   },
   async edit_file({ path, search, replace, replaceAll = false }) {
     try {
       const fullPath = resolve(CURRENT_CWD, path);
       const content = readFileSync(fullPath, 'utf8');
+      const backup = backupFile(fullPath);
       if (!content.includes(search)) return `Error: Search string not found in ${path}`;
       const updated = replaceAll ? content.split(search).join(replace) : content.replace(search, replace);
       writeFileSync(fullPath, updated, 'utf8');
-      return `Successfully applied edit to ${path}${replaceAll ? ' (all occurrences replaced)' : ''}`;
+      return `Successfully applied edit to ${path}${replaceAll ? ' (all occurrences replaced)' : ''}${backup ? `\nBackup: ${backup}` : ''}`;
     } catch (e) { return `Error: ${e.message}`; }
   },
   async multi_edit_file({ path, changes }) {
     try {
       const fullPath = resolve(CURRENT_CWD, path);
       let content = readFileSync(fullPath, 'utf8');
+      const backup = backupFile(fullPath);
       for (const change of changes) {
         if (!content.includes(change.search)) return `Error: Search string "${change.search}" not found in ${path}`;
         content = content.replace(change.search, change.replace);
       }
       writeFileSync(fullPath, content, 'utf8');
-      return `Successfully applied ${changes.length} edits to ${path}`;
+      return `Successfully applied ${changes.length} edits to ${path}${backup ? `\nBackup: ${backup}` : ''}`;
     } catch (e) { return `Error: ${e.message}`; }
   },
   async run_command({ command, timeoutMs = 120000 }) {
@@ -380,23 +600,97 @@ const Tools = {
 };
 
 
+const ASCII_FONT = {
+  A: [" ▄▄▄▄ ", "█    █", "█▄▄▄▄█", "█    █", "█    █"],
+  B: ["▄▄▄▄▄ ", "█    █", "█████ ", "█    █", "█████ "],
+  C: [" ▄▄▄▄ ", "█     ", "█     ", "█     ", " ▀▀▀▀ "],
+  D: ["▄▄▄▄  ", "█   █ ", "█    █", "█   █ ", "████  "],
+  E: ["██████", "█     ", "████  ", "█     ", "██████"],
+  F: ["██████", "█     ", "████  ", "█     ", "█     "],
+  G: [" ▄▄▄▄ ", "█     ", "█  ▄▄█", "█    █", " ▀▀▀▀ "],
+  H: ["█    █", "█    █", "██████", "█    █", "█    █"],
+  I: ["██████", "  ██  ", "  ██  ", "  ██  ", "██████"],
+  J: ["██████", "    ██", "    ██", "█   ██", " ▀██▀ "],
+  K: ["█   ██", "█  ██ ", "████  ", "█  ██ ", "█   ██"],
+  L: ["█     ", "█     ", "█     ", "█     ", "██████"],
+  M: ["█    █", "██  ██", "█ ██ █", "█    █", "█    █"],
+  N: ["█    █", "██   █", "█ █  █", "█  █ █", "█    █"],
+  O: [" ▄▄▄▄ ", "█    █", "█    █", "█    █", " ▀▀▀▀ "],
+  P: ["█████ ", "█    █", "█████ ", "█     ", "█     "],
+  Q: [" ▄▄▄▄ ", "█    █", "█ █  █", "█  ▀▀█", " ▀▀▀▀▀"],
+  R: ["█████ ", "█    █", "█████ ", "█  ██ ", "█   ██"],
+  S: [" ▄▄▄▄ ", "█     ", " ▀▀▀▀▄", "     █", "█████▀"],
+  T: ["██████", "  ██  ", "  ██  ", "  ██  ", "  ██  "],
+  U: ["█    █", "█    █", "█    █", "█    █", " ▀██▀ "],
+  V: ["█    █", "█    █", " █  █ ", " █  █ ", "  ██  "],
+  W: ["█    █", "█    █", "█ ██ █", "██  ██", "█    █"],
+  X: ["█    █", " █  █ ", "  ██  ", " █  █ ", "█    █"],
+  Y: ["█    █", " █  █ ", "  ██  ", "  ██  ", "  ██  "],
+  Z: ["██████", "    █ ", "  █▀  ", " █    ", "██████"],
+  " ": ["      ", "      ", "      ", "      ", "      "],
+  "-": ["      ", "      ", "██████", "      ", "      "],
+  "!": ["  ██  ", "  ██  ", "  ██  ", "      ", "  ██  "],
+  ".": ["      ", "      ", "      ", "      ", "  ██  "],
+};
+
+function renderAsciiText(text) {
+  const cleanText = String(text).toUpperCase();
+  const fontHeight = 5;
+  const lines = Array(fontHeight).fill('');
+  
+  for (let i = 0; i < cleanText.length; i++) {
+    const char = cleanText[i];
+    const glyph = ASCII_FONT[char] || ASCII_FONT[" "];
+    for (let h = 0; h < fontHeight; h++) {
+      lines[h] += glyph[h] + "  ";
+    }
+  }
+  return "\n" + lines.map(line => line.trimEnd()).join('\n') + "\n";
+}
+
+function stripAnsi(str) {
+  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
+}
+
 function printBox(title, content, color = c.brand) {
   const lines = content.split('\n');
   const cols = process.stdout.columns || 80;
-  const maxWidth = Math.max(20, Math.min(cols - 10, 80));
-  const width = Math.max(title.length + 6, ...lines.map(l => Math.min(l.length, maxWidth))) + 4;
+  const maxWidth = Math.max(40, cols - 12);
 
-  const top = `╭── ${c.bold(title)} ${'─'.repeat(width - title.length - 6)}╮`;
-  const bottom = `╰${'─'.repeat(width - 1)}╯`;
+  const formattedLines = [];
+  lines.forEach(line => {
+    const visLen = stripAnsi(line).length;
+    if (visLen <= maxWidth) {
+      formattedLines.push(line);
+    } else {
+      if (line.includes('\x1b')) {
+        formattedLines.push(line);
+      } else {
+        let remaining = line;
+        while (remaining.length > 0) {
+          formattedLines.push(remaining.substring(0, maxWidth));
+          remaining = remaining.substring(maxWidth);
+        }
+      }
+    }
+  });
+
+  const maxVisLen = Math.max(
+    title.length + 6,
+    ...formattedLines.map(l => stripAnsi(l).length)
+  );
+
+  const innerW = maxVisLen + 4;
+
+  const top = `╭── ${c.bold(title)} ${'─'.repeat(innerW - title.length - 6)}╮`;
+  const bottom = `╰${'─'.repeat(innerW)}╯`;
 
   console.log(`\n  ${color(top)}`);
-  lines.forEach(line => {
-    let remaining = line;
-    while (remaining.length > 0) {
-      const chunk = remaining.substring(0, maxWidth);
-      console.log(`  ${color('│')}  ${c.reset(chunk).padEnd(width + (NO_COLOR ? -4 : 8))} ${color('│')}`);
-      remaining = remaining.substring(maxWidth);
-    }
+  formattedLines.forEach(line => {
+    const visLen = stripAnsi(line).length;
+    const paddingNeeded = innerW - visLen - 4;
+    const padding = ' '.repeat(Math.max(0, paddingNeeded));
+    console.log(`  ${color('│')}  ${c.reset(line)}${padding}  ${color('│')}`);
   });
   console.log(`  ${color(bottom)}\n`);
 }
@@ -406,7 +700,8 @@ function printStatus(text, icon = '•', color = c.dim) {
 }
 
 async function printBranding() {
-  const banner = `
+  const settings = readSettingsSafe();
+  const banner = settings.customBanner !== undefined ? settings.customBanner : `
    ██╗  ██╗██╗   ██╗██████╗ ███████╗██╗  ██╗██╗
    ██║ ██╔╝╚██╗ ██╔╝██╔══██╗██╔════╝╚██╗██╔╝██║
    █████╔╝  ╚████╔╝ ██████╔╝█████╗   ╚███╔╝ ██║
@@ -414,9 +709,12 @@ async function printBranding() {
    ██║  ██╗   ██║   ██║  ██║███████╗██╔╝ ██╗██║
    ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝
   `;
-  const g = createGradient(["#22d3ee", "#8b5cf6", "#22d3a0"]);
-  console.log(g(banner));
-  console.log(c.bold(c.brand(`  Kyrexi Pro v${VERSION}`)) + (IS_AGENTIC ? c.accent(' [AGENTIC MODE ACTIVE]') : ''));
+  if (banner) {
+    console.log(gradientText(banner));
+  }
+  const customCreator = settings.customCreator || `Kyrexi Pro`;
+  const badges = [CURRENT_THEME, IS_AGENTIC ? 'agentic' : 'guarded', SAFE_MODE ? 'safe' : 'standard', DEBUG_MODE ? 'debug' : null].filter(Boolean).join(' • ');
+  console.log(c.bold(c.brand(`  ${customCreator} v${VERSION}`)) + ' ' + c.dim(c.gray(`[${badges}]`)));
   console.log(c.gray('  ─────────────────────────────────────────────────────────────────\n'));
 }
 
@@ -425,6 +723,8 @@ async function runAgenticLoop(client, initialMessage, rl, isFixMode = false) {
   const MAX_STEPS = 1000;
   let message = initialMessage;
   const prmpt = isFixMode ? mission2 : mission1;
+  const settings = readSettingsSafe();
+  const customName = settings.customName || 'Kyrexi';
 
   const stdinDataListeners = process.stdin.listeners('data');
   const stdinKeypressListeners = process.stdin.listeners('keypress');
@@ -443,7 +743,7 @@ async function runAgenticLoop(client, initialMessage, rl, isFixMode = false) {
       let toolResults = [];
       let buffer = '';
 
-      process.stdout.write(`\n  ${c.brand(ICONS.robot + (isFixMode ? ' Fixer › ' : ' Kyrexi › '))}`);
+      process.stdout.write(`\n  ${c.brand(ICONS.robot + (isFixMode ? ' Fixer › ' : ` ${customName} › `))}`);
 
       for await (const chunk of client.stream(message, prmpt)) {
         fullResponse += chunk;
@@ -643,18 +943,11 @@ async function runSilentAgenticLoop(client, message, isFixMode = true) {
         buffer = callPart[1];
 
         try {
-          let rawJson = rawCall.trim().replace(/```(?:json)?/g, '').replace(/```/g, '').trim();
-          const parsed = JSON.parse(rawJson);
-          const call = {
-            name: parsed.name || parsed.tool || parsed.action || parsed.type,
-            parameters: parsed.parameters || parsed.args || parsed.params || parsed
-          };
-          if (call.name && call.parameters === parsed) {
-            const { name, tool, action, type, parameters, args, params, ...rest } = parsed;
-            call.parameters = rest;
-          }
-
-          if (call.name && Tools[call.name]) {
+          const call = parseToolCall(rawCall);
+          const validation = validateToolCall(call.name, call.parameters);
+          if (!validation.ok) {
+            toolResults.push(`BLOCKED: ${validation.reason}`);
+          } else if (call.name && Tools[call.name]) {
 
             const result = await Tools[call.name](call.parameters);
             toolResults.push(`TOOL_RESULT for ${call.name}:\n${result}`);
@@ -978,9 +1271,12 @@ async function main() {
   const fixIdx = cliArgs.indexOf('fix');
 
   await printBranding();
-  if (!existsSync(KYREXI_DIR)) mkdirSync(KYREXI_DIR, { recursive: true });
+  ensureKyrexiDirs();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   let settings = JSON.parse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}');
+  CURRENT_THEME = settings.theme || CURRENT_THEME;
+  COMPACT_MODE = typeof settings.compact === 'boolean' ? settings.compact : COMPACT_MODE;
+  if (settings.theme && THEMES[settings.theme] && !process.env.KYREXI_THEME) CURRENT_THEME = settings.theme;
 
   let token = API_KEY_ENV || settings.token;
   let user = null;
@@ -1161,6 +1457,324 @@ async function main() {
         return;
       }
 
+
+      if (cmd === '/pwd') {
+        printBox('CURRENT DIRECTORY', CURRENT_CWD, c.cyan);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd.startsWith('/cd ')) {
+        const nextDir = fullInput.substring(4).trim();
+        const target = resolve(CURRENT_CWD, nextDir);
+        if (existsSync(target) && statSync(target).isDirectory()) {
+          CURRENT_CWD = target;
+          printStatus(`Changed directory to ${CURRENT_CWD}`, ICONS.folder, c.green);
+        } else {
+          printStatus(`Directory not found: ${target}`, ICONS.warn, c.yellow);
+        }
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/status') {
+        const os = await import('node:os');
+        const status = [
+          `Version: ${VERSION}`,
+          `Theme: ${CURRENT_THEME}`,
+          `Mode: ${IS_AGENTIC ? 'Agentic' : 'Guarded'}`,
+          `Safe Mode: ${SAFE_MODE ? 'ON' : 'OFF'}`,
+          `Debug: ${DEBUG_MODE ? 'ON' : 'OFF'}`,
+          `CWD: ${CURRENT_CWD}`,
+          usageMeter('Memory', os.totalmem() - os.freemem(), os.totalmem()),
+          `History: ${HISTORY_PATH}`
+        ].join('\n');
+        printBox('KYREXI STATUS', status, c.accent);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd.startsWith('/theme')) {
+        const name = fullInput.split(/\s+/)[1];
+        if (!name) {
+          printBox('THEMES', Object.keys(THEMES).map(t => `${t === CURRENT_THEME ? '●' : '○'} ${t}`).join('\n'), c.brand);
+        } else if (THEMES[name]) {
+          CURRENT_THEME = name;
+          settings.theme = name;
+          writeFileSync(SETTINGS_PATH, JSON.stringify(settings, null, 2));
+          printStatus(`Theme changed to ${name}`, ICONS.spark, c.green);
+          await printBranding();
+        } else {
+          printStatus(`Unknown theme. Available: ${Object.keys(THEMES).join(', ')}`, ICONS.warn, c.yellow);
+        }
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/safe') {
+        SAFE_MODE = !SAFE_MODE;
+        printStatus(`Safe Mode: ${SAFE_MODE ? c.green('ON') : c.yellow('OFF')}`, ICONS.lock, SAFE_MODE ? c.green : c.yellow);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/debug') {
+        DEBUG_MODE = !DEBUG_MODE;
+        printStatus(`Debug Mode: ${DEBUG_MODE ? c.green('ON') : c.gray('OFF')}`, ICONS.info, DEBUG_MODE ? c.green : c.gray);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/history') {
+        const history = existsSync(HISTORY_PATH) ? readFileSync(HISTORY_PATH, 'utf8').split('\n').slice(-80).join('\n') : 'No history yet.';
+        printBox('RECENT HISTORY', trimForTerminal(history, 5000), c.gray);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+
+      if (cmd === '/tools') {
+        const names = Object.keys(Tools).sort();
+        const grouped = names.map(name => {
+          const danger = ['run_command', 'write_file', 'edit_file', 'multi_edit_file', 'run_background_command', 'delete_file', 'copy_file', 'make_http_request', 'append_file'].includes(name) ? ' ⚠️' : '';
+          return `${danger ? c.yellow(name) : c.brand(name)}${danger}`;
+        }).join('\n');
+        printBox('AVAILABLE TOOLS', grouped, c.accent);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/doctor') {
+        printStatus('Running Kyrexi health checks...', '⏳', c.accent);
+        const report = await runDoctor(client, token);
+        printBox('KYREXI DOCTOR', report, c.green);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/compact') {
+        COMPACT_MODE = !COMPACT_MODE;
+        settings.compact = COMPACT_MODE;
+        writeSettingsSafe(settings);
+        printStatus(`Compact Mode: ${COMPACT_MODE ? c.green('ON') : c.gray('OFF')}`, ICONS.info, COMPACT_MODE ? c.green : c.gray);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/customize' || cmd.startsWith('/customize ')) {
+        const settings = readSettingsSafe();
+        const questionAsync = (query) => new Promise(res => rl.question(query, res));
+        
+        console.log(`\n  ╭── ${c.accent('🎨 AI CUSTOMIZATION WIZARD')} ──────────────────────────────────────────╮`);
+        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  Make this AI truly yours! Personalize the name, banner, and branding.      ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('1.')} Change AI Name (currently: ${c.bold(settings.customName || 'Kyrexi')})                               ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('2.')} Change Creator / Branding Line (currently: ${c.bold(settings.customCreator || 'Kyrexi Pro')})        ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('3.')} Change Banner ASCII / Text                                   ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('4.')} Reset to Default Kyrexi Branding                               ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('5.')} Cancel / Exit Wizard                                          ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+        console.log(`  ╰────────────────────────────────────────────────────────────────────────────╯\n`);
+
+        const choice = await questionAsync(`  ${c.cyan('›')} Select option [1-5]: `);
+        const choiceClean = choice.trim();
+
+        if (choiceClean === '1') {
+          const newName = await questionAsync(`\n  ${c.cyan('›')} Enter your custom AI assistant name: `);
+          if (newName.trim()) {
+            settings.customName = newName.trim();
+            writeSettingsSafe(settings);
+            printStatus(`AI Name successfully changed to: ${c.bold(settings.customName)}! ✨`, ICONS.check, c.green);
+          } else {
+            printStatus('Operation cancelled. AI Name was not changed.', ICONS.warn, c.yellow);
+          }
+        } else if (choiceClean === '2') {
+          const newCreator = await questionAsync(`\n  ${c.cyan('›')} Enter custom Creator/Branding Line (e.g. "UDMODZ Pro" or "JARVIS Pro"): `);
+          if (newCreator.trim()) {
+            settings.customCreator = newCreator.trim();
+            writeSettingsSafe(settings);
+            printStatus(`Creator branding successfully changed to: ${c.bold(settings.customCreator)}! ✨`, ICONS.check, c.green);
+          } else {
+            printStatus('Operation cancelled. Branding Line was not changed.', ICONS.warn, c.yellow);
+          }
+        } else if (choiceClean === '3') {
+          console.log(`\n  ╭── ${c.accent('🎨 BANNER CUSTOMIZER')} ────────────────────────────────────────────────╮`);
+          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}  Choose how you'd like to create your gorgeous custom banner:               ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}  ${c.brand('1.')} Auto-Generate gorgeous Block Font from text (Instant!)           ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}  ${c.brand('2.')} Paste/Write Custom ASCII Art manually                             ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}  ${c.brand('3.')} Cancel / Go Back                                                 ${c.accent('│')}`);
+          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
+          console.log(`  ╰────────────────────────────────────────────────────────────────────────────╯\n`);
+
+          const bannerChoice = await questionAsync(`  ${c.cyan('›')} Select option [1-3]: `);
+          const bannerChoiceClean = bannerChoice.trim();
+
+          if (bannerChoiceClean === '1') {
+            const bannerText = await questionAsync(`\n  ${c.cyan('›')} Enter text to convert to ASCII (A-Z, 0-9, -, !, ., max 10 chars): `);
+            if (bannerText.trim()) {
+              const generatedBanner = renderAsciiText(bannerText.trim());
+              settings.customBanner = generatedBanner;
+              writeSettingsSafe(settings);
+              printStatus('Custom ASCII banner successfully generated! Look at this masterpiece! ✨', ICONS.check, c.green);
+              await printBranding();
+            } else {
+              printStatus('Operation cancelled. Banner was not changed.', ICONS.warn, c.yellow);
+            }
+          } else if (bannerChoiceClean === '2') {
+            console.log(`\n  ${c.cyan('›')} Paste your custom Banner text / ASCII art. Make it gorgeous!`);
+            console.log(`  ${c.dim('  (Tip: Paste your ASCII art or banner, then type a line containing ONLY "END" and press Enter to save!)')}\n`);
+            
+            let bannerLines = [];
+            const collectBanner = () => {
+              return new Promise((res) => {
+                const bannerRL = createInterface({ input: process.stdin, output: process.stdout });
+                bannerRL.on('line', (line) => {
+                  if (line.trim() === 'END') {
+                    bannerRL.close();
+                    res(bannerLines.join('\n'));
+                  } else {
+                    bannerLines.push(line);
+                  }
+                });
+              });
+            };
+            
+            rl.pause();
+            const newBanner = await collectBanner();
+            rl.resume();
+            
+            if (newBanner.trim()) {
+              settings.customBanner = newBanner;
+              writeSettingsSafe(settings);
+              printStatus('Custom banner successfully updated! Let\'s show it off! ✨', ICONS.check, c.green);
+              await printBranding();
+            } else {
+              printStatus('Operation cancelled. Banner was not changed.', ICONS.warn, c.yellow);
+            }
+          } else {
+            printStatus('Banner customization cancelled.', ICONS.info, c.gray);
+          }
+        } else if (choiceClean === '4') {
+          delete settings.customName;
+          delete settings.customCreator;
+          delete settings.customBanner;
+          writeSettingsSafe(settings);
+          printStatus('All brand settings have been reset to default Kyrexi settings! 🧸', ICONS.check, c.green);
+          await printBranding();
+        } else {
+          printStatus('Exiting wizard. No changes made.', ICONS.info, c.gray);
+        }
+
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/context') {
+        printBox('SESSION CONTEXT', contextSummary || 'No saved session context yet.', c.cyan);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd === '/reset-context') {
+        contextSummary = '';
+        printStatus('Session context cleared.', ICONS.check, c.green);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd.startsWith('/config')) {
+        const parts = fullInput.split(/\s+/);
+        const action = parts[1];
+        if (!action || action === 'show') {
+          const shown = {
+            baseUrl: BASE_URL,
+            version: VERSION,
+            token: maskSecret(token),
+            theme: CURRENT_THEME,
+            agentic: IS_AGENTIC,
+            safeMode: SAFE_MODE,
+            debug: DEBUG_MODE,
+            compact: COMPACT_MODE,
+            settingsPath: SETTINGS_PATH,
+          };
+          printBox('CONFIG', JSON.stringify(shown, null, 2), c.cyan);
+        } else if (action === 'set' && parts[2] === 'theme' && parts[3] && THEMES[parts[3]]) {
+          CURRENT_THEME = parts[3];
+          settings.theme = CURRENT_THEME;
+          writeSettingsSafe(settings);
+          printStatus(`Theme saved as ${CURRENT_THEME}`, ICONS.check, c.green);
+        } else {
+          printStatus('Usage: /config show  OR  /config set theme neon|fire|ocean|candy|matrix', ICONS.warn, c.yellow);
+        }
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd.startsWith('/backup')) {
+        const targetArg = fullInput.substring('/backup'.length).trim();
+        if (!targetArg) {
+          const items = listBackups(15);
+          const output = items.length ? items.map((b, i) => `${i + 1}. ${b.name} (${formatBytes(b.size)})`).join('\n') : 'No backups yet.';
+          printBox('RECENT BACKUPS', output, c.gold);
+        } else {
+          const target = resolve(CURRENT_CWD, targetArg);
+          const backup = backupFile(target);
+          printStatus(backup ? `Backup created: ${backup}` : `Could not backup: ${targetArg}`, backup ? ICONS.check : ICONS.warn, backup ? c.green : c.yellow);
+        }
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
+      if (cmd.startsWith('/scan')) {
+        const dirArg = fullInput.substring('/scan'.length).trim() || '.';
+        const target = resolve(CURRENT_CWD, dirArg);
+        if (!existsSync(target) || !statSync(target).isDirectory()) {
+          printStatus(`Directory not found: ${target}`, ICONS.warn, c.yellow);
+        } else {
+          const ignore = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.vercel', '.netlify']);
+          let dirs = 0, files = 0, bytes = 0;
+          const walk = (d) => {
+            for (const item of readdirSync(d)) {
+              if (ignore.has(item)) continue;
+              const full = join(d, item);
+              const st = statSync(full);
+              if (st.isDirectory()) { dirs++; walk(full); }
+              else { files++; bytes += st.size; }
+            }
+          };
+          walk(target);
+          printBox('PROJECT SCAN', `Path: ${target}\nFiles: ${files}\nFolders: ${dirs}\nSize: ${formatBytes(bytes)}\nIgnored: ${[...ignore].join(', ')}`, c.accent);
+        }
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
       if (cmd === '/help' || cmd === 'help') {
         const helpContent = [
           `${c.brand('  /chats')}   ${c.gray(' List all active AI sessions')}`,
@@ -1170,6 +1784,22 @@ async function main() {
           `${c.brand('  /trust')}   ${c.gray(' Pre-authorize N tool actions  e.g. /trust 10')}`,
           `${c.brand('  /fix')}     ${c.gray(' Auto-fix an error using tools')}`,
           `${c.brand('  /clear')}   ${c.gray(' Clear the terminal display')}`,
+          `${c.brand('  /pwd')}     ${c.gray(' Show current working directory')}`,
+          `${c.brand('  /cd')}      ${c.gray(' Change current working directory')}`,
+          `${c.brand('  /status')}  ${c.gray(' Show mode, theme, memory, and path')}`,
+          `${c.brand('  /theme')}   ${c.gray(' Change terminal theme: neon/fire/ocean/candy/matrix')}`,
+          `${c.brand('  /safe')}    ${c.gray(' Toggle extra dangerous-command protection')}`,
+          `${c.brand('  /debug')}   ${c.gray(' Toggle debug logs')}`,
+          `${c.brand('  /history')} ${c.gray(' Show recent local prompt history')}`,
+          `${c.brand('  /tools')}   ${c.gray(' List available agent tools')}`,
+          `${c.brand('  /doctor')}  ${c.gray(' Run connection/auth/runtime health checks')}`,
+          `${c.brand('  /compact')} ${c.gray(' Toggle compact terminal output mode')}`,
+          `${c.brand('  /customize')}${c.gray(' Personalize AI name, banner, and creator')}`,
+          `${c.brand('  /context')} ${c.gray(' Show saved session context summary')}`,
+          `${c.brand('  /reset-context')} ${c.gray(' Clear saved session context')}`,
+          `${c.brand('  /config')}  ${c.gray(' Show or update CLI settings')}`,
+          `${c.brand('  /backup')}  ${c.gray(' List backups or backup a file: /backup src/index.js')}`,
+          `${c.brand('  /scan')}    ${c.gray(' Scan current project files/folders/size')}`,
           `${c.brand('  /login')}   ${c.gray(' Force re-authentication')}`,
           `${c.brand('  /exit')}    ${c.gray(' Safely close the Kyrexi CLI')}`,
           `${c.gray('  --resume')}  ${c.gray(' CLI flag: resume last session on startup')}`
@@ -1201,6 +1831,7 @@ async function main() {
       }
 
       try {
+        appendHistory('USER', fullInput);
         const fullMsg = contextSummary
           ? `[SESSION CONTEXT]\n${contextSummary}\n\n${fullInput}`
           : fullInput;
