@@ -1,6 +1,6 @@
 {
   "name": "kyrexi",
-  "version": "1.6.2",
+  "version": "1.6.3",
   "description": "Kyrexi AI — Your companion in the terminal and your code",
   "type": "module",
   "main": "kyrexi.js",
