@@ -23,7 +23,13 @@ const SETTINGS_PATH = join(KYREXI_DIR, 'settings.json');
 const HISTORY_PATH = join(KYREXI_DIR, 'history.log');
 const BASE_URL = process.env.KYREXI_BASE_URL || 'https://kyrexi.udmodz.site';
 const API_KEY_ENV = process.env.KYREXI_API_KEY;
-const VERSION = '3.7.0';
+let VERSION = '3.7.0';
+try {
+  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
+  VERSION = pkg.version || VERSION;
+} catch (e) {
+  // Safe fallback to '3.7.0' if reading fails
+}
 
 
 const args = process.argv.slice(2);
