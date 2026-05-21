@@ -1266,6 +1266,104 @@ async function login() {
   });
 }
 
+async function checkForUpdates(rl, force = false) {
+  const settings = readSettingsSafe();
+  const now = Date.now();
+  
+  if (force) {
+    printStatus('Checking for updates... ⏳', '⏳', c.accent);
+  }
+  
+  try {
+    const controller = new AbortController();
+    const id = setTimeout(() => controller.abort(), 4000);
+    
+    const res = await fetch('https://registry.npmjs.org/kyrexi/latest', {
+      signal: controller.signal,
+      headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` }
+    });
+    clearTimeout(id);
+    
+    if (!res.ok) {
+      if (force) {
+        printStatus(`Failed to check for updates (server returned ${res.status}).`, ICONS.error, c.red);
+      }
+      return;
+    }
+    
+    const data = await res.json();
+    const latestVersion = data.version;
+    
+    settings.lastUpdateCheck = now;
+    writeSettingsSafe(settings);
+    
+    if (isNewerVersion(VERSION, latestVersion)) {
+      const updateBoxContent = [
+        `A new version of Kyrexi is available!`,
+        `Latest:  ${c.green('v' + latestVersion)}`,
+        `Current: ${c.dim(c.gray('v' + VERSION))}`,
+        ``,
+        `Run ${c.brand('kyrexi update')} or type ${c.brand('/update')} to install it!`
+      ].join('\n');
+      
+      printBox('✨ UPDATE AVAILABLE', updateBoxContent, c.gold);
+      
+      if (force && rl) {
+        const confirm = await new Promise(r => rl.question(`  ${c.cyan(ICONS.spark + ' Would you like to update Kyrexi now? [y/N] ')}`, r));
+        const cleanConf = confirm.toLowerCase().trim();
+        if (cleanConf === 'y' || cleanConf === 'yes' || cleanConf === 'ok') {
+          await runUpdate(latestVersion);
+        } else {
+          printStatus('Update cancelled by user.', ICONS.info, c.gray);
+        }
+      }
+    } else {
+      if (force) {
+        printStatus(`Kyrexi is already up-to-date (v${VERSION}). ✨`, ICONS.check, c.green);
+      }
+    }
+  } catch (e) {
+    if (force) {
+      printStatus(`Failed to check for updates: ${e.message}`, ICONS.error, c.red);
+    }
+    logDebug('Update check failed:', e.message);
+  }
+}
+
+function isNewerVersion(local, remote) {
+  const l = String(local).split(/[.-]/).map(Number);
+  const r = String(remote).split(/[.-]/).map(Number);
+  for (let i = 0; i < Math.max(l.length, r.length); i++) {
+    const lp = l[i] || 0;
+    const rp = r[i] || 0;
+    if (rp > lp) return true;
+    if (lp > rp) return false;
+  }
+  return false;
+}
+
+async function runUpdate(targetVersion) {
+  printStatus(`Starting update sequence to v${targetVersion}... ⏳`, '⏳', c.accent);
+  
+  const command = 'npm install -g kyrexi@latest';
+  printStatus(`Executing global update command...`, ICONS.tool, c.accent);
+  
+  try {
+    const { exec } = await import('node:child_process');
+    const execPromise = new Promise((resolve, reject) => {
+      exec(command, (error, stdout, stderr) => {
+        if (error) reject(error);
+        else resolve({ stdout, stderr });
+      });
+    });
+    
+    await execPromise;
+    printBox('UPDATE SUCCESS', `Kyrexi has been successfully updated to v${targetVersion}! 🎉\nPlease restart your terminal or CLI session to apply the update.`, c.green);
+  } catch (e) {
+    printBox('UPDATE FAILED', `Failed to auto-update: ${e.message}\n\nPlease try running manually:\n${c.bold('npm install -g kyrexi')}`, c.red);
+  }
+}
+
 async function main() {
   const cliArgs = process.argv.slice(2);
   const fixIdx = cliArgs.indexOf('fix');
@@ -1273,6 +1371,11 @@ async function main() {
   await printBranding();
   ensureKyrexiDirs();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
+
+  if (cliArgs.includes('update') || cliArgs.includes('--update')) {
+    await checkForUpdates(rl, true);
+    process.exit(0);
+  }
   let settings = JSON.parse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}');
   CURRENT_THEME = settings.theme || CURRENT_THEME;
   COMPACT_MODE = typeof settings.compact === 'boolean' ? settings.compact : COMPACT_MODE;
@@ -1314,6 +1417,12 @@ async function main() {
 
   const client = new KyrexiClient(token);
   printStatus('Sweet, your project context is fully synchronized! 🚀✨', ICONS.check, c.brand);
+
+  try {
+    await checkForUpdates(rl, false);
+  } catch (e) {
+    logDebug('Startup update check failed:', e.message);
+  }
 
 
   const _origInit = client.init.bind(client);
@@ -1387,6 +1496,13 @@ async function main() {
 
       const cmd = fullInput.toLowerCase();
       if (cmd === 'exit' || cmd === '/exit' || cmd === '/q') process.exit(0);
+
+      if (cmd === '/update') {
+        await checkForUpdates(rl, true);
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
 
       if (cmd === '/clear' || cmd === 'clear') {
         console.clear();
@@ -1783,6 +1899,7 @@ async function main() {
           `${c.brand('  /agent')}   ${c.gray(' Toggle full agentic mode (skip y/N prompts)')}`,
           `${c.brand('  /trust')}   ${c.gray(' Pre-authorize N tool actions  e.g. /trust 10')}`,
           `${c.brand('  /fix')}     ${c.gray(' Auto-fix an error using tools')}`,
+          `${c.brand('  /update')}   ${c.gray(' Check for and install CLI updates')}`,
           `${c.brand('  /clear')}   ${c.gray(' Clear the terminal display')}`,
           `${c.brand('  /pwd')}     ${c.gray(' Show current working directory')}`,
           `${c.brand('  /cd')}      ${c.gray(' Change current working directory')}`,
