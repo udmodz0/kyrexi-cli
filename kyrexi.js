@@ -28,7 +28,6 @@ try {
   const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
   VERSION = pkg.version || VERSION;
 } catch (e) {
-  // Safe fallback to '3.7.0' if reading fails
 }
 
 
@@ -1272,6 +1271,55 @@ async function login() {
   });
 }
 
+async function captureVoiceCommand() {
+  return new Promise((resolve) => {
+    const server = createServer(async (req, res) => {
+      const headers = {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      };
+
+      if (req.method === 'OPTIONS') {
+        res.writeHead(200, headers);
+        res.end();
+        return;
+      }
+
+      if (req.method === 'POST' && req.url === '/submit') {
+        let body = '';
+        req.on('data', chunk => { body += chunk; });
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body);
+            res.writeHead(200, { ...headers, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ success: true }));
+            server.close();
+            resolve(data.text);
+          } catch (e) {
+            res.writeHead(400, { ...headers, 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid JSON' }));
+          }
+        });
+        return;
+      }
+
+      res.writeHead(404, headers);
+      res.end();
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      const voiceUrl = `${BASE_URL}/voice?port=${port}`;
+      printStatus('Opening browser for secure voice input bridge... 🎙️✨', ICONS.spark, c.brand);
+      console.log(c.gray(`  If it doesn't open automatically, visit: ${voiceUrl}\n`));
+      
+      const start = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start ""' : 'xdg-open';
+      exec(`${start} "${voiceUrl}"`);
+    });
+  });
+}
+
 async function checkForUpdates(rl, force = false) {
   const settings = readSettingsSafe();
   const now = Date.now();
@@ -1681,6 +1729,27 @@ async function main() {
         return;
       }
 
+      if (cmd === '/voice' || cmd === '/v') {
+        try {
+          const spokenText = await captureVoiceCommand();
+          if (spokenText && spokenText.trim()) {
+            printStatus(`Voice command received: "${spokenText}"`, ICONS.check, c.green);
+            appendHistory('USER', spokenText);
+            const fullMsg = contextSummary
+              ? `[SESSION CONTEXT]\n${contextSummary}\n\n${spokenText}`
+              : spokenText;
+            await runAgenticLoop(client, fullMsg, rl);
+          } else {
+            printStatus('No speech captured or operation cancelled.', ICONS.warn, c.yellow);
+          }
+        } catch (e) {
+          console.log(c.red(`\n  Critical Error during Voice Command: ${e.message}`));
+        }
+        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
       if (cmd === '/doctor') {
         printStatus('Running Kyrexi health checks...', '⏳', c.accent);
         const report = await runDoctor(client, token);
@@ -1905,6 +1974,7 @@ async function main() {
           `${c.brand('  /agent')}   ${c.gray(' Toggle full agentic mode (skip y/N prompts)')}`,
           `${c.brand('  /trust')}   ${c.gray(' Pre-authorize N tool actions  e.g. /trust 10')}`,
           `${c.brand('  /fix')}     ${c.gray(' Auto-fix an error using tools')}`,
+          `${c.brand('  /voice')}    ${c.gray(' Speak your command via browser bridge')}`,
           `${c.brand('  /update')}   ${c.gray(' Check for and install CLI updates')}`,
           `${c.brand('  /clear')}   ${c.gray(' Clear the terminal display')}`,
           `${c.brand('  /pwd')}     ${c.gray(' Show current working directory')}`,
