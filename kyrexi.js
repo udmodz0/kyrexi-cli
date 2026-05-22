@@ -113,9 +113,23 @@ function logDebug(...parts) {
 }
 
 function ensureKyrexiDirs() {
-  ensureKyrexiDirs();
-  const backups = join(KYREXI_DIR, 'backups');
-  if (!existsSync(backups)) mkdirSync(backups, { recursive: true });
+  try {
+    if (!existsSync(KYREXI_DIR)) {
+      mkdirSync(KYREXI_DIR, { recursive: true });
+    }
+
+    const backups = join(KYREXI_DIR, 'backups');
+    if (!existsSync(backups)) {
+      mkdirSync(backups, { recursive: true });
+    }
+
+    const logs = join(KYREXI_DIR, 'logs');
+    if (!existsSync(logs)) {
+      mkdirSync(logs, { recursive: true });
+    }
+  } catch (e) {
+    console.error(`Kyrexi directory init failed: ${e.message}`);
+  }
 }
 
 function backupFile(filePath) {
