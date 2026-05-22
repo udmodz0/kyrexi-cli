@@ -118,14 +118,14 @@ function ensureKyrexiDirs() {
       mkdirSync(KYREXI_DIR, { recursive: true });
     }
 
-    const backups = join(KYREXI_DIR, 'backups');
-    if (!existsSync(backups)) {
-      mkdirSync(backups, { recursive: true });
+    const backupsDir = join(KYREXI_DIR, 'backups');
+    if (!existsSync(backupsDir)) {
+      mkdirSync(backupsDir, { recursive: true });
     }
 
-    const logs = join(KYREXI_DIR, 'logs');
-    if (!existsSync(logs)) {
-      mkdirSync(logs, { recursive: true });
+    const logsDir = join(KYREXI_DIR, 'logs');
+    if (!existsSync(logsDir)) {
+      mkdirSync(logsDir, { recursive: true });
     }
   } catch (e) {
     console.error(`Kyrexi directory init failed: ${e.message}`);
@@ -143,6 +143,32 @@ function backupFile(filePath) {
   } catch (e) {
     logDebug('backup failed:', e.message);
     return null;
+  }
+}
+
+
+function listBackups(limit = 8) {
+  try {
+    ensureKyrexiDirs();
+    const backupsDir = join(KYREXI_DIR, 'backups');
+    if (!existsSync(backupsDir)) return [];
+    return readdirSync(backupsDir)
+      .map((name) => {
+        const fullPath = join(backupsDir, name);
+        const info = statSync(fullPath);
+        return {
+          name,
+          path: fullPath,
+          size: info.size,
+          mtime: info.mtimeMs,
+          updatedAt: new Date(info.mtimeMs).toLocaleString()
+        };
+      })
+      .sort((a, b) => b.mtime - a.mtime)
+      .slice(0, limit);
+  } catch (e) {
+    logDebug('list backups failed:', e.message);
+    return [];
   }
 }
 
