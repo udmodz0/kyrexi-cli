@@ -44,7 +44,6 @@ Kyrexi CLI was upgraded from the original Agentic Pro flow into a more complete 
 - Added richer status boxes, better icons, cleaner prompt labels, and gradient branding.
 - Added `/compact` mode for cleaner output when working in small terminals.
 - Added persistent theme saving through `/config set theme <name>`.
-- Added a full AI Personalization & Custom Branding Wizard via `/customize` command (change AI name, ASCII banner, and creator/branding labels dynamically).
 
 ### 🧠 Agent Logic Updates
 - Stronger mission prompts for standard mode and fixer mode.
@@ -95,7 +94,6 @@ Kyrexi CLI was upgraded from the original Agentic Pro flow into a more complete 
 | `/tools` | List every built-in and plugin tool available to the agent |
 | `/doctor` | Run auth, server, Node.js, and chat API health checks |
 | `/compact` | Toggle compact terminal output mode |
-| `/customize` | Personalize AI name, banner, and creator/branding |
 | `/context` | Show saved session context summary |
 | `/reset-context` | Clear saved session context summary |
 | `/config show` | Show current CLI config with masked token |
@@ -225,6 +223,38 @@ process.on('uncaughtException', async (error) => {
 
 <img src="https://user-images.githubusercontent.com/73097560/115834477-dbab4500-a447-11eb-908a-139a6edaec5c.gif" width="100%">
 
+
+
+## 🖥️ Kyrexi v3.8 Dashboard Update
+
+New updates added by **UDMODZ × THENUXOFC**:
+
+| Feature | Command | Description |
+|:---|:---|:---|
+| Live Dashboard | `/dashboard` or `/dash` | Shows CLI mode, theme, server status, token mask, chat count, CWD, Git branch, project file stats, code mix, background processes, backups, runtime, memory and CPU meters. |
+| Creator Branding | Built-in | Default branding now shows `Kyrexi Pro • Creators: UDMODZ × THENUXOFC`. |
+| Customization Update | `/customize` | Creator branding examples now include `UDMODZ × THENUXOFC`. |
+| Help Menu Update | `/help` | Command palette now includes `/dashboard`. |
+
+### Test it
+
+```bash
+kyrexi --agentic
+```
+
+Inside the CLI:
+
+```bash
+/dashboard
+```
+
+Or quick alias:
+
+```bash
+/dash
+```
+
+
 ## 🚀 Installation
 
 
@@ -262,7 +292,7 @@ kyrexi fix "Error: Cannot find module './utils'"
 
 <div align="center">
 
-## 👨‍💻 Creator
+## 👨‍💻 Creators
 
 <a href="https://github.com/udmodz0">
   <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=2500&pause=800&color=7C3AED&center=true&vCenter=true&repeat=true&width=300&height=50&lines=UDMODZ" alt="UDMODZ" />
@@ -272,6 +302,16 @@ kyrexi fix "Error: Cannot find module './utils'"
 
 <a href="https://github.com/udmodz0">
   <img src="https://img.shields.io/badge/GitHub-udmodz-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"/>
+</a>
+<br/>
+<a href="https://github.com/thenuxofc">
+  <img src="https://readme-typing-svg.demolab.com?font=Fira+Code&weight=700&size=28&duration=2500&pause=800&color=7C3AED&center=true&vCenter=true&repeat=true&width=300&height=50&lines=THENUX" alt="THENUX" />
+</a>
+
+<br/>
+
+<a href="https://github.com/thenuxofc">
+  <img src="https://img.shields.io/badge/GitHub-THENUX-181717?style=for-the-badge&logo=github&logoColor=white" alt="GitHub"/>
 </a>
 
 <br/><br/>
