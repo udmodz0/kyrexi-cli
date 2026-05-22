@@ -4,8 +4,6 @@
  * Built for Kyrexi AI | https://kyrexi.udmodz.site
  * @license Apache-2.0
  * Copyright 2020-2026 UDMODZ
- * Creators: UDMODZ × THENUXOFC
- * Edited and advanced by THENUXOFC
  */
 
 import { createServer } from 'node:http';
@@ -24,12 +22,7 @@ const SETTINGS_PATH = join(KYREXI_DIR, 'settings.json');
 const HISTORY_PATH = join(KYREXI_DIR, 'history.log');
 const BASE_URL = process.env.KYREXI_BASE_URL || 'https://kyrexi.udmodz.site';
 const API_KEY_ENV = process.env.KYREXI_API_KEY;
-let VERSION = '3.7.0';
-try {
-  const pkg = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
-  VERSION = pkg.version || VERSION;
-} catch (e) {
-}
+const VERSION = '3.8.1';
 
 
 const args = process.argv.slice(2);
@@ -120,7 +113,7 @@ function logDebug(...parts) {
 }
 
 function ensureKyrexiDirs() {
-  if (!existsSync(KYREXI_DIR)) mkdirSync(KYREXI_DIR, { recursive: true });
+  ensureKyrexiDirs();
   const backups = join(KYREXI_DIR, 'backups');
   if (!existsSync(backups)) mkdirSync(backups, { recursive: true });
 }
@@ -137,58 +130,6 @@ function backupFile(filePath) {
     logDebug('backup failed:', e.message);
     return null;
   }
-}
-
-function listBackups(limit = 20) {
-  try {
-    ensureKyrexiDirs();
-    const dir = join(KYREXI_DIR, 'backups');
-    return readdirSync(dir)
-      .map(name => ({ name, path: join(dir, name), time: statSync(join(dir, name)).mtimeMs, size: statSync(join(dir, name)).size }))
-      .sort((a, b) => b.time - a.time)
-      .slice(0, limit);
-  } catch (e) {
-    logDebug('list backups failed:', e.message);
-    return [];
-  }
-}
-
-function readSettingsSafe() {
-  return safeJsonParse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}', {}) || {};
-}
-
-function writeSettingsSafe(next) {
-  ensureKyrexiDirs();
-  writeFileSync(SETTINGS_PATH, JSON.stringify(next, null, 2));
-}
-
-function maskSecret(value = '') {
-  const s = String(value || '');
-  if (!s) return '(empty)';
-  if (s.length <= 8) return '********';
-  return `${s.slice(0, 4)}...${s.slice(-4)}`;
-}
-
-async function runDoctor(client, token) {
-  const checks = [];
-  const add = (name, ok, detail = '') => checks.push(`${ok ? '✅' : '❌'} ${name}${detail ? ` — ${detail}` : ''}`);
-  add('Node.js runtime', Number(process.versions.node.split('.')[0]) >= 18, `v${process.versions.node}`);
-  add('Settings directory', existsSync(KYREXI_DIR), KYREXI_DIR);
-  add('API token', !!token, maskSecret(token));
-  add('Current directory', existsSync(CURRENT_CWD), CURRENT_CWD);
-  try {
-    const res = await fetch(`${BASE_URL}/api/auth/verify?token=${token}`, { headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` } });
-    add('Server auth verify', res.ok, `${res.status}`);
-  } catch (e) {
-    add('Server auth verify', false, e.message);
-  }
-  try {
-    const chats = await client.listChats();
-    add('Chat API', Array.isArray(chats), `${Array.isArray(chats) ? chats.length : 0} sessions visible`);
-  } catch (e) {
-    add('Chat API', false, e.message);
-  }
-  return checks.join('\n');
 }
 
 function appendHistory(role, text) {
@@ -281,105 +222,139 @@ function usageMeter(label, used, total) {
 }
 
 
-function getProjectStats(root = CURRENT_CWD) {
-  const ignore = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.vercel', '.netlify', '.cache', 'coverage']);
-  const stats = {
-    root,
-    files: 0,
-    dirs: 0,
-    bytes: 0,
-    js: 0,
-    ts: 0,
-    json: 0,
-    env: 0,
-    markdown: 0,
-    packageJson: existsSync(join(root, 'package.json')),
-    git: existsSync(join(root, '.git')),
-  };
+function softBadge(label, value, color = c.brand) {
+  return `${color('◆')} ${c.bold(label)} ${c.gray('→')} ${value}`;
+}
 
-  const walk = (dir, depth = 0) => {
-    if (depth > 6) return;
+function miniBar(value, total, width = 28) {
+  const pct = total ? Math.max(0, Math.min(1, value / total)) : 0;
+  const filled = Math.round(pct * width);
+  const empty = Math.max(0, width - filled);
+  return `${c.green('█'.repeat(filled))}${c.gray('░'.repeat(empty))} ${c.bold((pct * 100).toFixed(0) + '%')}`;
+}
+
+function safeCountFiles(dir, limit = 5000) {
+  let files = 0, dirs = 0, bytes = 0, scanned = 0;
+  const skip = new Set(['node_modules', '.git', '.kyrexi', 'dist', 'build', '.next', '.vercel', '.cache']);
+  function walk(target) {
+    if (scanned > limit) return;
     let entries = [];
-    try { entries = readdirSync(dir); } catch { return; }
+    try { entries = readdirSync(target); } catch { return; }
     for (const entry of entries) {
-      if (ignore.has(entry)) continue;
-      const full = join(dir, entry);
+      if (scanned > limit) break;
+      const full = join(target, entry);
       let st;
       try { st = statSync(full); } catch { continue; }
+      scanned++;
       if (st.isDirectory()) {
-        stats.dirs++;
-        walk(full, depth + 1);
-      } else {
-        stats.files++;
-        stats.bytes += st.size;
-        if (entry.endsWith('.js') || entry.endsWith('.mjs') || entry.endsWith('.cjs')) stats.js++;
-        if (entry.endsWith('.ts') || entry.endsWith('.tsx')) stats.ts++;
-        if (entry.endsWith('.json')) stats.json++;
-        if (entry.startsWith('.env')) stats.env++;
-        if (entry.endsWith('.md')) stats.markdown++;
+        dirs++;
+        if (!skip.has(entry)) walk(full);
+      } else if (st.isFile()) {
+        files++;
+        bytes += st.size;
       }
     }
-  };
-
-  if (existsSync(root) && statSync(root).isDirectory()) walk(root);
-  return stats;
-}
-
-async function getGitBranch() {
-  try {
-    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd: CURRENT_CWD, timeout: 2500 });
-    return stdout.trim() || 'unknown';
-  } catch {
-    return 'not a git repo';
   }
+  walk(dir);
+  return { files, dirs, bytes, scanned, limited: scanned > limit };
 }
 
-async function buildDashboard(client, token) {
-  const os = await import('node:os');
-  const memUsed = os.totalmem() - os.freemem();
-  const stats = getProjectStats(CURRENT_CWD);
-  const settings = readSettingsSafe();
-  const branch = await getGitBranch();
-  const running = [...backgroundProcesses.entries()].filter(([, p]) => String(p.status).startsWith('running'));
-  const backups = listBackups(5);
-
-  let serverStatus = 'unknown';
+function packageSummary() {
+  const pkgPath = resolve(CURRENT_CWD, 'package.json');
+  if (!existsSync(pkgPath)) return 'No package.json detected';
   try {
-    const res = await fetch(`${BASE_URL}/api/test`, { headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` } });
-    serverStatus = res.ok ? `online (${res.status})` : `issue (${res.status})`;
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
+    const deps = Object.keys(pkg.dependencies || {}).length;
+    const devDeps = Object.keys(pkg.devDependencies || {}).length;
+    const scripts = Object.keys(pkg.scripts || {}).join(', ') || 'none';
+    return [
+      `Name: ${c.bold(pkg.name || '(unnamed)')}`,
+      `Version: ${pkg.version || '0.0.0'}`,
+      `Type: ${pkg.type || 'commonjs/default'}`,
+      `Deps: ${deps} prod / ${devDeps} dev`,
+      `Scripts: ${scripts}`
+    ].join('\n');
   } catch (e) {
-    serverStatus = `offline (${e.message})`;
+    return `package.json parse error: ${e.message}`;
   }
+}
 
-  let chatCount = 'unknown';
+async function renderDashboard(client, token) {
+  const os = await import('node:os');
+  const cpus = os.cpus() || [];
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
+  const usedMem = totalMem - freeMem;
+  const uptimeHours = os.uptime() / 3600;
+  const project = safeCountFiles(CURRENT_CWD);
+  const backups = listBackups(8);
+  const settings = readSettingsSafe();
+  let chatCount = 'offline';
   try {
     const chats = await client.listChats();
-    chatCount = Array.isArray(chats) ? String(chats.length) : '0';
+    chatCount = Array.isArray(chats) ? String(chats.length) : 'unknown';
   } catch { }
 
-  return [
-    `${c.bold('Creators')}        ${c.brand('UDMODZ')} ${c.gray('×')} ${c.brand('THENUXOFC')}`,
-    `${c.bold('Version')}         v${VERSION}`,
-    `${c.bold('Mode')}            ${IS_AGENTIC ? c.green('AGENTIC') : c.yellow('GUARDED')} ${SAFE_MODE ? c.green('SAFE') : c.gray('STANDARD')} ${DEBUG_MODE ? c.cyan('DEBUG') : ''}`,
-    `${c.bold('Theme')}           ${CURRENT_THEME}`,
-    `${c.bold('Base URL')}        ${BASE_URL}`,
-    `${c.bold('Token')}           ${maskSecret(token)}`,
-    `${c.bold('Server')}          ${serverStatus}`,
-    `${c.bold('Chats')}           ${chatCount}`,
-    `${c.bold('CWD')}             ${CURRENT_CWD}`,
-    `${c.bold('Git')}             ${branch}`,
-    `${c.bold('Project')}         ${stats.files} files • ${stats.dirs} folders • ${formatBytes(stats.bytes)}`,
-    `${c.bold('Code Mix')}        JS:${stats.js} TS:${stats.ts} JSON:${stats.json} MD:${stats.markdown} ENV:${stats.env}`,
-    `${c.bold('Package')}         ${stats.packageJson ? c.green('package.json found') : c.gray('no package.json')} • ${stats.git ? c.green('git found') : c.gray('no git')}`,
-    `${c.bold('Background')}      ${running.length} running process(es)`,
-    `${c.bold('Context')}         ${contextSummary ? `${contextSummary.split('\n').length} remembered item(s)` : 'empty'}`,
-    `${c.bold('Backups')}         ${backups.length ? backups.map(b => b.name).join(', ') : 'none yet'}`,
-    `${c.bold('Runtime')}         Node ${process.versions.node} • ${os.platform()} ${os.arch()}`,
-    usageMeter(c.bold('Memory'), memUsed, os.totalmem()),
-    usageMeter(c.bold('CPU Load'), os.loadavg()[0], Math.max(1, os.cpus().length)),
-    `${c.bold('Settings')}        ${SETTINGS_PATH}`,
-    `${c.bold('Saved Branding')}  ${settings.customCreator || 'Kyrexi Pro • Creators: UDMODZ × THENUXOFC'}`,
+  const title = gradientText(renderAsciiText('KYREXI'));
+  const header = [
+    title,
+    `${c.bold(c.brand('Agentic Pro Dashboard'))} ${c.gray('— live terminal cockpit')}`,
+    `${c.gray('Creators:')} ${c.gold('UDMODZ')} ${c.gray('×')} ${c.cyan('THENUXOFC')}`,
+    `${c.gray('Time:')} ${nowStamp()}`
   ].join('\n');
+
+  const systemPanel = [
+    softBadge('Mode', IS_AGENTIC ? c.green('AGENTIC') : c.yellow('GUARDED'), IS_AGENTIC ? c.green : c.yellow),
+    softBadge('Theme', c.accent(CURRENT_THEME), c.accent),
+    softBadge('Safe', SAFE_MODE ? c.green('ON') : c.yellow('OFF'), SAFE_MODE ? c.green : c.yellow),
+    softBadge('Debug', DEBUG_MODE ? c.green('ON') : c.gray('OFF'), DEBUG_MODE ? c.green : c.gray),
+    softBadge('Node', `v${process.versions.node}`, c.cyan),
+    softBadge('Platform', `${os.platform()} ${os.arch()}`, c.blue),
+    softBadge('CPU', `${cpus[0]?.model || 'Unknown'} (${cpus.length} cores)`, c.orange),
+    softBadge('Uptime', `${uptimeHours.toFixed(1)}h`, c.lime)
+  ].join('\n');
+
+  const memoryPanel = [
+    `${c.bold('RAM')}    ${miniBar(usedMem, totalMem, 30)}`,
+    `${c.gray('Used:')} ${formatBytes(usedMem)} / ${formatBytes(totalMem)}`,
+    `${c.bold('Project')} ${miniBar(project.bytes, Math.max(project.bytes, 1024 * 1024 * 100), 30)}`,
+    `${c.gray('Size:')} ${formatBytes(project.bytes)} scanned${project.limited ? ' +' : ''}`
+  ].join('\n');
+
+  const projectPanel = [
+    softBadge('CWD', c.white(CURRENT_CWD), c.folder ? c.brand : c.brand),
+    softBadge('Files', String(project.files), c.cyan),
+    softBadge('Folders', String(project.dirs), c.blue),
+    softBadge('Background', `${backgroundProcesses.size} process(es)`, c.orange),
+    softBadge('Chats', chatCount, c.pink),
+    softBadge('Token', maskSecret(token), c.lock ? c.yellow : c.yellow),
+    '',
+    packageSummary()
+  ].join('\n');
+
+  const recentBackups = backups.length
+    ? backups.map((b, i) => `${c.gold(String(i + 1).padStart(2, '0'))}. ${b.name} ${c.gray('(' + formatBytes(b.size) + ')')}`).join('\n')
+    : c.gray('No backups yet. Edits will create backups automatically.');
+
+  const quickActions = [
+    `${c.brand('/help')}        command palette`,
+    `${c.brand('/doctor')}      health check`,
+    `${c.brand('/theme fire')}  switch theme`,
+    `${c.brand('/safe')}        toggle safety`,
+    `${c.brand('/history')}     recent prompts`,
+    `${c.brand('/fix <error>')} autonomous fixer`,
+    `${c.brand('/agent')}       toggle autonomy`,
+    `${c.brand('/clear')}       clean terminal`
+  ].join('\n');
+
+  console.clear();
+  console.log(header);
+  printBox('SYSTEM CORE', systemPanel, c.brand);
+  printBox('RESOURCE MONITOR', memoryPanel, c.accent);
+  printBox('PROJECT INTELLIGENCE', projectPanel, c.cyan);
+  printBox('RECENT BACKUPS', recentBackups, c.gold);
+  printBox('QUICK ACTIONS', quickActions, c.pink);
+  console.log(c.gray(`  Dashboard refreshed. Run ${c.brand('/dashboard')} anytime for the cockpit view.\n`));
 }
 
 const ICONS = {
@@ -708,97 +683,23 @@ const Tools = {
 };
 
 
-const ASCII_FONT = {
-  A: [" ▄▄▄▄ ", "█    █", "█▄▄▄▄█", "█    █", "█    █"],
-  B: ["▄▄▄▄▄ ", "█    █", "█████ ", "█    █", "█████ "],
-  C: [" ▄▄▄▄ ", "█     ", "█     ", "█     ", " ▀▀▀▀ "],
-  D: ["▄▄▄▄  ", "█   █ ", "█    █", "█   █ ", "████  "],
-  E: ["██████", "█     ", "████  ", "█     ", "██████"],
-  F: ["██████", "█     ", "████  ", "█     ", "█     "],
-  G: [" ▄▄▄▄ ", "█     ", "█  ▄▄█", "█    █", " ▀▀▀▀ "],
-  H: ["█    █", "█    █", "██████", "█    █", "█    █"],
-  I: ["██████", "  ██  ", "  ██  ", "  ██  ", "██████"],
-  J: ["██████", "    ██", "    ██", "█   ██", " ▀██▀ "],
-  K: ["█   ██", "█  ██ ", "████  ", "█  ██ ", "█   ██"],
-  L: ["█     ", "█     ", "█     ", "█     ", "██████"],
-  M: ["█    █", "██  ██", "█ ██ █", "█    █", "█    █"],
-  N: ["█    █", "██   █", "█ █  █", "█  █ █", "█    █"],
-  O: [" ▄▄▄▄ ", "█    █", "█    █", "█    █", " ▀▀▀▀ "],
-  P: ["█████ ", "█    █", "█████ ", "█     ", "█     "],
-  Q: [" ▄▄▄▄ ", "█    █", "█ █  █", "█  ▀▀█", " ▀▀▀▀▀"],
-  R: ["█████ ", "█    █", "█████ ", "█  ██ ", "█   ██"],
-  S: [" ▄▄▄▄ ", "█     ", " ▀▀▀▀▄", "     █", "█████▀"],
-  T: ["██████", "  ██  ", "  ██  ", "  ██  ", "  ██  "],
-  U: ["█    █", "█    █", "█    █", "█    █", " ▀██▀ "],
-  V: ["█    █", "█    █", " █  █ ", " █  █ ", "  ██  "],
-  W: ["█    █", "█    █", "█ ██ █", "██  ██", "█    █"],
-  X: ["█    █", " █  █ ", "  ██  ", " █  █ ", "█    █"],
-  Y: ["█    █", " █  █ ", "  ██  ", "  ██  ", "  ██  "],
-  Z: ["██████", "    █ ", "  █▀  ", " █    ", "██████"],
-  " ": ["      ", "      ", "      ", "      ", "      "],
-  "-": ["      ", "      ", "██████", "      ", "      "],
-  "!": ["  ██  ", "  ██  ", "  ██  ", "      ", "  ██  "],
-  ".": ["      ", "      ", "      ", "      ", "  ██  "],
-};
-
-function renderAsciiText(text) {
-  const cleanText = String(text).toUpperCase();
-  const fontHeight = 5;
-  const lines = Array(fontHeight).fill('');
-  
-  for (let i = 0; i < cleanText.length; i++) {
-    const char = cleanText[i];
-    const glyph = ASCII_FONT[char] || ASCII_FONT[" "];
-    for (let h = 0; h < fontHeight; h++) {
-      lines[h] += glyph[h] + "  ";
-    }
-  }
-  return "\n" + lines.map(line => line.trimEnd()).join('\n') + "\n";
-}
-
-function stripAnsi(str) {
-  return str.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '');
-}
-
 function printBox(title, content, color = c.brand) {
   const lines = content.split('\n');
   const cols = process.stdout.columns || 80;
-  const maxWidth = Math.max(40, cols - 12);
+  const maxWidth = Math.max(20, Math.min(cols - 10, 80));
+  const width = Math.max(title.length + 6, ...lines.map(l => Math.min(l.length, maxWidth))) + 4;
 
-  const formattedLines = [];
-  lines.forEach(line => {
-    const visLen = stripAnsi(line).length;
-    if (visLen <= maxWidth) {
-      formattedLines.push(line);
-    } else {
-      if (line.includes('\x1b')) {
-        formattedLines.push(line);
-      } else {
-        let remaining = line;
-        while (remaining.length > 0) {
-          formattedLines.push(remaining.substring(0, maxWidth));
-          remaining = remaining.substring(maxWidth);
-        }
-      }
-    }
-  });
-
-  const maxVisLen = Math.max(
-    title.length + 6,
-    ...formattedLines.map(l => stripAnsi(l).length)
-  );
-
-  const innerW = maxVisLen + 4;
-
-  const top = `╭── ${c.bold(title)} ${'─'.repeat(innerW - title.length - 6)}╮`;
-  const bottom = `╰${'─'.repeat(innerW)}╯`;
+  const top = `╭── ${c.bold(title)} ${'─'.repeat(width - title.length - 6)}╮`;
+  const bottom = `╰${'─'.repeat(width - 1)}╯`;
 
   console.log(`\n  ${color(top)}`);
-  formattedLines.forEach(line => {
-    const visLen = stripAnsi(line).length;
-    const paddingNeeded = innerW - visLen - 4;
-    const padding = ' '.repeat(Math.max(0, paddingNeeded));
-    console.log(`  ${color('│')}  ${c.reset(line)}${padding}  ${color('│')}`);
+  lines.forEach(line => {
+    let remaining = line;
+    while (remaining.length > 0) {
+      const chunk = remaining.substring(0, maxWidth);
+      console.log(`  ${color('│')}  ${c.reset(chunk).padEnd(width + (NO_COLOR ? -4 : 8))} ${color('│')}`);
+      remaining = remaining.substring(maxWidth);
+    }
   });
   console.log(`  ${color(bottom)}\n`);
 }
@@ -808,8 +709,7 @@ function printStatus(text, icon = '•', color = c.dim) {
 }
 
 async function printBranding() {
-  const settings = readSettingsSafe();
-  const banner = settings.customBanner !== undefined ? settings.customBanner : `
+  const banner = `
    ██╗  ██╗██╗   ██╗██████╗ ███████╗██╗  ██╗██╗
    ██║ ██╔╝╚██╗ ██╔╝██╔══██╗██╔════╝╚██╗██╔╝██║
    █████╔╝  ╚████╔╝ ██████╔╝█████╗   ╚███╔╝ ██║
@@ -817,12 +717,9 @@ async function printBranding() {
    ██║  ██╗   ██║   ██║  ██║███████╗██╔╝ ██╗██║
    ╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝
   `;
-  if (banner) {
-    console.log(gradientText(banner));
-  }
-  const customCreator = settings.customCreator || `Kyrexi Pro • Creators: UDMODZ × THENUXOFC`;
+  console.log(gradientText(banner));
   const badges = [CURRENT_THEME, IS_AGENTIC ? 'agentic' : 'guarded', SAFE_MODE ? 'safe' : 'standard', DEBUG_MODE ? 'debug' : null].filter(Boolean).join(' • ');
-  console.log(c.bold(c.brand(`  ${customCreator} v${VERSION}`)) + ' ' + c.dim(c.gray(`[${badges}]`)));
+  console.log(c.bold(c.brand(`  Kyrexi Pro v${VERSION}`)) + ' ' + c.dim(c.gray(`[${badges}]`)));
   console.log(c.gray('  ─────────────────────────────────────────────────────────────────\n'));
 }
 
@@ -831,8 +728,6 @@ async function runAgenticLoop(client, initialMessage, rl, isFixMode = false) {
   const MAX_STEPS = 1000;
   let message = initialMessage;
   const prmpt = isFixMode ? mission2 : mission1;
-  const settings = readSettingsSafe();
-  const customName = settings.customName || 'Kyrexi';
 
   const stdinDataListeners = process.stdin.listeners('data');
   const stdinKeypressListeners = process.stdin.listeners('keypress');
@@ -851,7 +746,7 @@ async function runAgenticLoop(client, initialMessage, rl, isFixMode = false) {
       let toolResults = [];
       let buffer = '';
 
-      process.stdout.write(`\n  ${c.brand(ICONS.robot + (isFixMode ? ' Fixer › ' : ` ${customName} › `))}`);
+      process.stdout.write(`\n  ${c.brand(ICONS.robot + (isFixMode ? ' Fixer › ' : ' Kyrexi › '))}`);
 
       for await (const chunk of client.stream(message, prmpt)) {
         fullResponse += chunk;
@@ -1374,153 +1269,6 @@ async function login() {
   });
 }
 
-async function captureVoiceCommand() {
-  return new Promise((resolve) => {
-    const server = createServer(async (req, res) => {
-      const headers = {
-        'Access-Control-Allow-Origin': '*',
-        'Access-Control-Allow-Methods': 'POST, OPTIONS',
-        'Access-Control-Allow-Headers': 'Content-Type',
-      };
-
-      if (req.method === 'OPTIONS') {
-        res.writeHead(200, headers);
-        res.end();
-        return;
-      }
-
-      if (req.method === 'POST' && req.url === '/submit') {
-        let body = '';
-        req.on('data', chunk => { body += chunk; });
-        req.on('end', () => {
-          try {
-            const data = JSON.parse(body);
-            res.writeHead(200, { ...headers, 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true }));
-            server.close();
-            resolve(data.text);
-          } catch (e) {
-            res.writeHead(400, { ...headers, 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ error: 'Invalid JSON' }));
-          }
-        });
-        return;
-      }
-
-      res.writeHead(404, headers);
-      res.end();
-    });
-
-    server.listen(0, () => {
-      const port = server.address().port;
-      const voiceUrl = `${BASE_URL}/voice?port=${port}`;
-      printStatus('Opening browser for secure voice input bridge... 🎙️✨', ICONS.spark, c.brand);
-      console.log(c.gray(`  If it doesn't open automatically, visit: ${voiceUrl}\n`));
-      
-      const start = process.platform === 'darwin' ? 'open' : process.platform === 'win32' ? 'start ""' : 'xdg-open';
-      exec(`${start} "${voiceUrl}"`);
-    });
-  });
-}
-
-async function checkForUpdates(rl, force = false) {
-  const settings = readSettingsSafe();
-  const now = Date.now();
-  
-  if (force) {
-    printStatus('Checking for updates... ⏳', '⏳', c.accent);
-  }
-  
-  try {
-    const controller = new AbortController();
-    const id = setTimeout(() => controller.abort(), 4000);
-    
-    const res = await fetch('https://registry.npmjs.org/kyrexi/latest', {
-      signal: controller.signal,
-      headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` }
-    });
-    clearTimeout(id);
-    
-    if (!res.ok) {
-      if (force) {
-        printStatus(`Failed to check for updates (server returned ${res.status}).`, ICONS.error, c.red);
-      }
-      return;
-    }
-    
-    const data = await res.json();
-    const latestVersion = data.version;
-    
-    settings.lastUpdateCheck = now;
-    writeSettingsSafe(settings);
-    
-    if (isNewerVersion(VERSION, latestVersion)) {
-      const updateBoxContent = [
-        `A new version of Kyrexi is available!`,
-        `Latest:  ${c.green('v' + latestVersion)}`,
-        `Current: ${c.dim(c.gray('v' + VERSION))}`,
-        ``,
-        `Run ${c.brand('kyrexi update')} or type ${c.brand('/update')} to install it!`
-      ].join('\n');
-      
-      printBox('✨ UPDATE AVAILABLE', updateBoxContent, c.gold);
-      
-      if (force && rl) {
-        const confirm = await new Promise(r => rl.question(`  ${c.cyan(ICONS.spark + ' Would you like to update Kyrexi now? [y/N] ')}`, r));
-        const cleanConf = confirm.toLowerCase().trim();
-        if (cleanConf === 'y' || cleanConf === 'yes' || cleanConf === 'ok') {
-          await runUpdate(latestVersion);
-        } else {
-          printStatus('Update cancelled by user.', ICONS.info, c.gray);
-        }
-      }
-    } else {
-      if (force) {
-        printStatus(`Kyrexi is already up-to-date (v${VERSION}). ✨`, ICONS.check, c.green);
-      }
-    }
-  } catch (e) {
-    if (force) {
-      printStatus(`Failed to check for updates: ${e.message}`, ICONS.error, c.red);
-    }
-    logDebug('Update check failed:', e.message);
-  }
-}
-
-function isNewerVersion(local, remote) {
-  const l = String(local).split(/[.-]/).map(Number);
-  const r = String(remote).split(/[.-]/).map(Number);
-  for (let i = 0; i < Math.max(l.length, r.length); i++) {
-    const lp = l[i] || 0;
-    const rp = r[i] || 0;
-    if (rp > lp) return true;
-    if (lp > rp) return false;
-  }
-  return false;
-}
-
-async function runUpdate(targetVersion) {
-  printStatus(`Starting update sequence to v${targetVersion}... ⏳`, '⏳', c.accent);
-  
-  const command = 'npm install -g kyrexi@latest';
-  printStatus(`Executing global update command...`, ICONS.tool, c.accent);
-  
-  try {
-    const { exec } = await import('node:child_process');
-    const execPromise = new Promise((resolve, reject) => {
-      exec(command, (error, stdout, stderr) => {
-        if (error) reject(error);
-        else resolve({ stdout, stderr });
-      });
-    });
-    
-    await execPromise;
-    printBox('UPDATE SUCCESS', `Kyrexi has been successfully updated to v${targetVersion}! 🎉\nPlease restart your terminal or CLI session to apply the update.`, c.green);
-  } catch (e) {
-    printBox('UPDATE FAILED', `Failed to auto-update: ${e.message}\n\nPlease try running manually:\n${c.bold('npm install -g kyrexi')}`, c.red);
-  }
-}
-
 async function main() {
   const cliArgs = process.argv.slice(2);
   const fixIdx = cliArgs.indexOf('fix');
@@ -1528,14 +1276,7 @@ async function main() {
   await printBranding();
   ensureKyrexiDirs();
   const rl = createInterface({ input: process.stdin, output: process.stdout });
-
-  if (cliArgs.includes('update') || cliArgs.includes('--update')) {
-    await checkForUpdates(rl, true);
-    process.exit(0);
-  }
   let settings = JSON.parse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}');
-  CURRENT_THEME = settings.theme || CURRENT_THEME;
-  COMPACT_MODE = typeof settings.compact === 'boolean' ? settings.compact : COMPACT_MODE;
   if (settings.theme && THEMES[settings.theme] && !process.env.KYREXI_THEME) CURRENT_THEME = settings.theme;
 
   let token = API_KEY_ENV || settings.token;
@@ -1574,12 +1315,6 @@ async function main() {
 
   const client = new KyrexiClient(token);
   printStatus('Sweet, your project context is fully synchronized! 🚀✨', ICONS.check, c.brand);
-
-  try {
-    await checkForUpdates(rl, false);
-  } catch (e) {
-    logDebug('Startup update check failed:', e.message);
-  }
 
 
   const _origInit = client.init.bind(client);
@@ -1653,13 +1388,6 @@ async function main() {
 
       const cmd = fullInput.toLowerCase();
       if (cmd === 'exit' || cmd === '/exit' || cmd === '/q') process.exit(0);
-
-      if (cmd === '/update') {
-        await checkForUpdates(rl, true);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
 
       if (cmd === '/clear' || cmd === 'clear') {
         console.clear();
@@ -1754,6 +1482,14 @@ async function main() {
         return;
       }
 
+      if (cmd === '/dashboard' || cmd === '/dash') {
+        await renderDashboard(client, token);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
       if (cmd === '/status') {
         const os = await import('node:os');
         const status = [
@@ -1819,266 +1555,6 @@ async function main() {
         return;
       }
 
-
-      if (cmd === '/dashboard' || cmd === '/dash') {
-        printStatus('Building live Kyrexi dashboard...', '⏳', c.accent);
-        const dash = await buildDashboard(client, token);
-        printBox('KYREXI LIVE DASHBOARD', dash, c.accent);
-        process.stdout.write(`
-  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/tools') {
-        const names = Object.keys(Tools).sort();
-        const grouped = names.map(name => {
-          const danger = ['run_command', 'write_file', 'edit_file', 'multi_edit_file', 'run_background_command', 'delete_file', 'copy_file', 'make_http_request', 'append_file'].includes(name) ? ' ⚠️' : '';
-          return `${danger ? c.yellow(name) : c.brand(name)}${danger}`;
-        }).join('\n');
-        printBox('AVAILABLE TOOLS', grouped, c.accent);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/voice' || cmd === '/v') {
-        try {
-          const spokenText = await captureVoiceCommand();
-          if (spokenText && spokenText.trim()) {
-            printStatus(`Voice command received: "${spokenText}"`, ICONS.check, c.green);
-            appendHistory('USER', spokenText);
-            const fullMsg = contextSummary
-              ? `[SESSION CONTEXT]\n${contextSummary}\n\n${spokenText}`
-              : spokenText;
-            await runAgenticLoop(client, fullMsg, rl);
-          } else {
-            printStatus('No speech captured or operation cancelled.', ICONS.warn, c.yellow);
-          }
-        } catch (e) {
-          console.log(c.red(`\n  Critical Error during Voice Command: ${e.message}`));
-        }
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/doctor') {
-        printStatus('Running Kyrexi health checks...', '⏳', c.accent);
-        const report = await runDoctor(client, token);
-        printBox('KYREXI DOCTOR', report, c.green);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/compact') {
-        COMPACT_MODE = !COMPACT_MODE;
-        settings.compact = COMPACT_MODE;
-        writeSettingsSafe(settings);
-        printStatus(`Compact Mode: ${COMPACT_MODE ? c.green('ON') : c.gray('OFF')}`, ICONS.info, COMPACT_MODE ? c.green : c.gray);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/customize' || cmd.startsWith('/customize ')) {
-        const settings = readSettingsSafe();
-        const questionAsync = (query) => new Promise(res => rl.question(query, res));
-        
-        console.log(`\n  ╭── ${c.accent('🎨 AI CUSTOMIZATION WIZARD')} ──────────────────────────────────────────╮`);
-        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  Make this AI truly yours! Personalize the name, banner, and branding.      ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('1.')} Change AI Name (currently: ${c.bold(settings.customName || 'Kyrexi')})                               ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('2.')} Change Creator / Branding Line (currently: ${c.bold(settings.customCreator || 'Kyrexi Pro • Creators: UDMODZ × THENUXOFC')})        ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('3.')} Change Banner ASCII / Text                                   ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('4.')} Reset to Default Kyrexi Branding                               ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('5.')} Cancel / Exit Wizard                                          ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-        console.log(`  ╰────────────────────────────────────────────────────────────────────────────╯\n`);
-
-        const choice = await questionAsync(`  ${c.cyan('›')} Select option [1-5]: `);
-        const choiceClean = choice.trim();
-
-        if (choiceClean === '1') {
-          const newName = await questionAsync(`\n  ${c.cyan('›')} Enter your custom AI assistant name: `);
-          if (newName.trim()) {
-            settings.customName = newName.trim();
-            writeSettingsSafe(settings);
-            printStatus(`AI Name successfully changed to: ${c.bold(settings.customName)}! ✨`, ICONS.check, c.green);
-          } else {
-            printStatus('Operation cancelled. AI Name was not changed.', ICONS.warn, c.yellow);
-          }
-        } else if (choiceClean === '2') {
-          const newCreator = await questionAsync(`\n  ${c.cyan('›')} Enter custom Creator/Branding Line (e.g. "UDMODZ × THENUXOFC" or "Kyrexi Pro"): `);
-          if (newCreator.trim()) {
-            settings.customCreator = newCreator.trim();
-            writeSettingsSafe(settings);
-            printStatus(`Creator branding successfully changed to: ${c.bold(settings.customCreator)}! ✨`, ICONS.check, c.green);
-          } else {
-            printStatus('Operation cancelled. Branding Line was not changed.', ICONS.warn, c.yellow);
-          }
-        } else if (choiceClean === '3') {
-          console.log(`\n  ╭── ${c.accent('🎨 BANNER CUSTOMIZER')} ────────────────────────────────────────────────╮`);
-          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}  Choose how you'd like to create your gorgeous custom banner:               ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}  ${c.brand('1.')} Auto-Generate gorgeous Block Font from text (Instant!)           ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}  ${c.brand('2.')} Paste/Write Custom ASCII Art manually                             ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}  ${c.brand('3.')} Cancel / Go Back                                                 ${c.accent('│')}`);
-          console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
-          console.log(`  ╰────────────────────────────────────────────────────────────────────────────╯\n`);
-
-          const bannerChoice = await questionAsync(`  ${c.cyan('›')} Select option [1-3]: `);
-          const bannerChoiceClean = bannerChoice.trim();
-
-          if (bannerChoiceClean === '1') {
-            const bannerText = await questionAsync(`\n  ${c.cyan('›')} Enter text to convert to ASCII (A-Z, 0-9, -, !, ., max 10 chars): `);
-            if (bannerText.trim()) {
-              const generatedBanner = renderAsciiText(bannerText.trim());
-              settings.customBanner = generatedBanner;
-              writeSettingsSafe(settings);
-              printStatus('Custom ASCII banner successfully generated! Look at this masterpiece! ✨', ICONS.check, c.green);
-              await printBranding();
-            } else {
-              printStatus('Operation cancelled. Banner was not changed.', ICONS.warn, c.yellow);
-            }
-          } else if (bannerChoiceClean === '2') {
-            console.log(`\n  ${c.cyan('›')} Paste your custom Banner text / ASCII art. Make it gorgeous!`);
-            console.log(`  ${c.dim('  (Tip: Paste your ASCII art or banner, then type a line containing ONLY "END" and press Enter to save!)')}\n`);
-            
-            let bannerLines = [];
-            const collectBanner = () => {
-              return new Promise((res) => {
-                const bannerRL = createInterface({ input: process.stdin, output: process.stdout });
-                bannerRL.on('line', (line) => {
-                  if (line.trim() === 'END') {
-                    bannerRL.close();
-                    res(bannerLines.join('\n'));
-                  } else {
-                    bannerLines.push(line);
-                  }
-                });
-              });
-            };
-            
-            rl.pause();
-            const newBanner = await collectBanner();
-            rl.resume();
-            
-            if (newBanner.trim()) {
-              settings.customBanner = newBanner;
-              writeSettingsSafe(settings);
-              printStatus('Custom banner successfully updated! Let\'s show it off! ✨', ICONS.check, c.green);
-              await printBranding();
-            } else {
-              printStatus('Operation cancelled. Banner was not changed.', ICONS.warn, c.yellow);
-            }
-          } else {
-            printStatus('Banner customization cancelled.', ICONS.info, c.gray);
-          }
-        } else if (choiceClean === '4') {
-          delete settings.customName;
-          delete settings.customCreator;
-          delete settings.customBanner;
-          writeSettingsSafe(settings);
-          printStatus('All brand settings have been reset to default Kyrexi settings! 🧸', ICONS.check, c.green);
-          await printBranding();
-        } else {
-          printStatus('Exiting wizard. No changes made.', ICONS.info, c.gray);
-        }
-
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/context') {
-        printBox('SESSION CONTEXT', contextSummary || 'No saved session context yet.', c.cyan);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd === '/reset-context') {
-        contextSummary = '';
-        printStatus('Session context cleared.', ICONS.check, c.green);
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd.startsWith('/config')) {
-        const parts = fullInput.split(/\s+/);
-        const action = parts[1];
-        if (!action || action === 'show') {
-          const shown = {
-            baseUrl: BASE_URL,
-            version: VERSION,
-            token: maskSecret(token),
-            theme: CURRENT_THEME,
-            agentic: IS_AGENTIC,
-            safeMode: SAFE_MODE,
-            debug: DEBUG_MODE,
-            compact: COMPACT_MODE,
-            settingsPath: SETTINGS_PATH,
-          };
-          printBox('CONFIG', JSON.stringify(shown, null, 2), c.cyan);
-        } else if (action === 'set' && parts[2] === 'theme' && parts[3] && THEMES[parts[3]]) {
-          CURRENT_THEME = parts[3];
-          settings.theme = CURRENT_THEME;
-          writeSettingsSafe(settings);
-          printStatus(`Theme saved as ${CURRENT_THEME}`, ICONS.check, c.green);
-        } else {
-          printStatus('Usage: /config show  OR  /config set theme neon|fire|ocean|candy|matrix', ICONS.warn, c.yellow);
-        }
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd.startsWith('/backup')) {
-        const targetArg = fullInput.substring('/backup'.length).trim();
-        if (!targetArg) {
-          const items = listBackups(15);
-          const output = items.length ? items.map((b, i) => `${i + 1}. ${b.name} (${formatBytes(b.size)})`).join('\n') : 'No backups yet.';
-          printBox('RECENT BACKUPS', output, c.gold);
-        } else {
-          const target = resolve(CURRENT_CWD, targetArg);
-          const backup = backupFile(target);
-          printStatus(backup ? `Backup created: ${backup}` : `Could not backup: ${targetArg}`, backup ? ICONS.check : ICONS.warn, backup ? c.green : c.yellow);
-        }
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
-      if (cmd.startsWith('/scan')) {
-        const dirArg = fullInput.substring('/scan'.length).trim() || '.';
-        const target = resolve(CURRENT_CWD, dirArg);
-        if (!existsSync(target) || !statSync(target).isDirectory()) {
-          printStatus(`Directory not found: ${target}`, ICONS.warn, c.yellow);
-        } else {
-          const ignore = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.vercel', '.netlify']);
-          let dirs = 0, files = 0, bytes = 0;
-          const walk = (d) => {
-            for (const item of readdirSync(d)) {
-              if (ignore.has(item)) continue;
-              const full = join(d, item);
-              const st = statSync(full);
-              if (st.isDirectory()) { dirs++; walk(full); }
-              else { files++; bytes += st.size; }
-            }
-          };
-          walk(target);
-          printBox('PROJECT SCAN', `Path: ${target}\nFiles: ${files}\nFolders: ${dirs}\nSize: ${formatBytes(bytes)}\nIgnored: ${[...ignore].join(', ')}`, c.accent);
-        }
-        process.stdout.write(`\n  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
-        rl.on('line', onLineInput);
-        return;
-      }
-
       if (cmd === '/help' || cmd === 'help') {
         const helpContent = [
           `${c.brand('  /chats')}   ${c.gray(' List all active AI sessions')}`,
@@ -2087,26 +1563,15 @@ async function main() {
           `${c.brand('  /agent')}   ${c.gray(' Toggle full agentic mode (skip y/N prompts)')}`,
           `${c.brand('  /trust')}   ${c.gray(' Pre-authorize N tool actions  e.g. /trust 10')}`,
           `${c.brand('  /fix')}     ${c.gray(' Auto-fix an error using tools')}`,
-          `${c.brand('  /voice')}    ${c.gray(' Speak your command via browser bridge')}`,
-          `${c.brand('  /update')}   ${c.gray(' Check for and install CLI updates')}`,
           `${c.brand('  /clear')}   ${c.gray(' Clear the terminal display')}`,
           `${c.brand('  /pwd')}     ${c.gray(' Show current working directory')}`,
           `${c.brand('  /cd')}      ${c.gray(' Change current working directory')}`,
           `${c.brand('  /status')}  ${c.gray(' Show mode, theme, memory, and path')}`,
+          `${c.brand('  /dashboard')} ${c.gray(' Open rich live terminal cockpit/dashboard')}`,
           `${c.brand('  /theme')}   ${c.gray(' Change terminal theme: neon/fire/ocean/candy/matrix')}`,
           `${c.brand('  /safe')}    ${c.gray(' Toggle extra dangerous-command protection')}`,
           `${c.brand('  /debug')}   ${c.gray(' Toggle debug logs')}`,
           `${c.brand('  /history')} ${c.gray(' Show recent local prompt history')}`,
-          `${c.brand('  /dashboard')} ${c.gray(' Show live CLI/project/server dashboard')}`,
-          `${c.brand('  /tools')}   ${c.gray(' List available agent tools')}`,
-          `${c.brand('  /doctor')}  ${c.gray(' Run connection/auth/runtime health checks')}`,
-          `${c.brand('  /compact')} ${c.gray(' Toggle compact terminal output mode')}`,
-          `${c.brand('  /customize')}${c.gray(' Personalize AI name, banner, and creator')}`,
-          `${c.brand('  /context')} ${c.gray(' Show saved session context summary')}`,
-          `${c.brand('  /reset-context')} ${c.gray(' Clear saved session context')}`,
-          `${c.brand('  /config')}  ${c.gray(' Show or update CLI settings')}`,
-          `${c.brand('  /backup')}  ${c.gray(' List backups or backup a file: /backup src/index.js')}`,
-          `${c.brand('  /scan')}    ${c.gray(' Scan current project files/folders/size')}`,
           `${c.brand('  /login')}   ${c.gray(' Force re-authentication')}`,
           `${c.brand('  /exit')}    ${c.gray(' Safely close the Kyrexi CLI')}`,
           `${c.gray('  --resume')}  ${c.gray(' CLI flag: resume last session on startup')}`
