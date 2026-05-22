@@ -4,7 +4,8 @@
  * Built for Kyrexi AI | https://kyrexi.udmodz.site
  * @license Apache-2.0
  * Copyright 2020-2026 UDMODZ
- * Edited and adavced by THENUX
+ * Creators: UDMODZ × THENUXOFC
+ * Edited and advanced by THENUXOFC
  */
 
 import { createServer } from 'node:http';
@@ -277,6 +278,108 @@ function usageMeter(label, used, total) {
   const filled = Math.round(pct * width);
   const bar = `${'█'.repeat(filled)}${'░'.repeat(width - filled)}`;
   return `${label}: ${bar} ${(pct * 100).toFixed(0)}%`;
+}
+
+
+function getProjectStats(root = CURRENT_CWD) {
+  const ignore = new Set(['node_modules', '.git', 'dist', 'build', '.next', '.vercel', '.netlify', '.cache', 'coverage']);
+  const stats = {
+    root,
+    files: 0,
+    dirs: 0,
+    bytes: 0,
+    js: 0,
+    ts: 0,
+    json: 0,
+    env: 0,
+    markdown: 0,
+    packageJson: existsSync(join(root, 'package.json')),
+    git: existsSync(join(root, '.git')),
+  };
+
+  const walk = (dir, depth = 0) => {
+    if (depth > 6) return;
+    let entries = [];
+    try { entries = readdirSync(dir); } catch { return; }
+    for (const entry of entries) {
+      if (ignore.has(entry)) continue;
+      const full = join(dir, entry);
+      let st;
+      try { st = statSync(full); } catch { continue; }
+      if (st.isDirectory()) {
+        stats.dirs++;
+        walk(full, depth + 1);
+      } else {
+        stats.files++;
+        stats.bytes += st.size;
+        if (entry.endsWith('.js') || entry.endsWith('.mjs') || entry.endsWith('.cjs')) stats.js++;
+        if (entry.endsWith('.ts') || entry.endsWith('.tsx')) stats.ts++;
+        if (entry.endsWith('.json')) stats.json++;
+        if (entry.startsWith('.env')) stats.env++;
+        if (entry.endsWith('.md')) stats.markdown++;
+      }
+    }
+  };
+
+  if (existsSync(root) && statSync(root).isDirectory()) walk(root);
+  return stats;
+}
+
+async function getGitBranch() {
+  try {
+    const { stdout } = await execAsync('git rev-parse --abbrev-ref HEAD', { cwd: CURRENT_CWD, timeout: 2500 });
+    return stdout.trim() || 'unknown';
+  } catch {
+    return 'not a git repo';
+  }
+}
+
+async function buildDashboard(client, token) {
+  const os = await import('node:os');
+  const memUsed = os.totalmem() - os.freemem();
+  const stats = getProjectStats(CURRENT_CWD);
+  const settings = readSettingsSafe();
+  const branch = await getGitBranch();
+  const running = [...backgroundProcesses.entries()].filter(([, p]) => String(p.status).startsWith('running'));
+  const backups = listBackups(5);
+
+  let serverStatus = 'unknown';
+  try {
+    const res = await fetch(`${BASE_URL}/api/test`, { headers: { 'User-Agent': `Kyrexi-CLI/${VERSION}` } });
+    serverStatus = res.ok ? `online (${res.status})` : `issue (${res.status})`;
+  } catch (e) {
+    serverStatus = `offline (${e.message})`;
+  }
+
+  let chatCount = 'unknown';
+  try {
+    const chats = await client.listChats();
+    chatCount = Array.isArray(chats) ? String(chats.length) : '0';
+  } catch { }
+
+  return [
+    `${c.bold('Creators')}        ${c.brand('UDMODZ')} ${c.gray('×')} ${c.brand('THENUXOFC')}`,
+    `${c.bold('Version')}         v${VERSION}`,
+    `${c.bold('Mode')}            ${IS_AGENTIC ? c.green('AGENTIC') : c.yellow('GUARDED')} ${SAFE_MODE ? c.green('SAFE') : c.gray('STANDARD')} ${DEBUG_MODE ? c.cyan('DEBUG') : ''}`,
+    `${c.bold('Theme')}           ${CURRENT_THEME}`,
+    `${c.bold('Base URL')}        ${BASE_URL}`,
+    `${c.bold('Token')}           ${maskSecret(token)}`,
+    `${c.bold('Server')}          ${serverStatus}`,
+    `${c.bold('Chats')}           ${chatCount}`,
+    `${c.bold('CWD')}             ${CURRENT_CWD}`,
+    `${c.bold('Git')}             ${branch}`,
+    `${c.bold('Project')}         ${stats.files} files • ${stats.dirs} folders • ${formatBytes(stats.bytes)}`,
+    `${c.bold('Code Mix')}        JS:${stats.js} TS:${stats.ts} JSON:${stats.json} MD:${stats.markdown} ENV:${stats.env}`,
+    `${c.bold('Package')}         ${stats.packageJson ? c.green('package.json found') : c.gray('no package.json')} • ${stats.git ? c.green('git found') : c.gray('no git')}`,
+    `${c.bold('Background')}      ${running.length} running process(es)`,
+    `${c.bold('Context')}         ${contextSummary ? `${contextSummary.split('\n').length} remembered item(s)` : 'empty'}`,
+    `${c.bold('Backups')}         ${backups.length ? backups.map(b => b.name).join(', ') : 'none yet'}`,
+    `${c.bold('Runtime')}         Node ${process.versions.node} • ${os.platform()} ${os.arch()}`,
+    usageMeter(c.bold('Memory'), memUsed, os.totalmem()),
+    usageMeter(c.bold('CPU Load'), os.loadavg()[0], Math.max(1, os.cpus().length)),
+    `${c.bold('Settings')}        ${SETTINGS_PATH}`,
+    `${c.bold('Saved Branding')}  ${settings.customCreator || 'Kyrexi Pro • Creators: UDMODZ × THENUXOFC'}`,
+  ].join('\n');
 }
 
 const ICONS = {
@@ -717,7 +820,7 @@ async function printBranding() {
   if (banner) {
     console.log(gradientText(banner));
   }
-  const customCreator = settings.customCreator || `Kyrexi Pro`;
+  const customCreator = settings.customCreator || `Kyrexi Pro • Creators: UDMODZ × THENUXOFC`;
   const badges = [CURRENT_THEME, IS_AGENTIC ? 'agentic' : 'guarded', SAFE_MODE ? 'safe' : 'standard', DEBUG_MODE ? 'debug' : null].filter(Boolean).join(' • ');
   console.log(c.bold(c.brand(`  ${customCreator} v${VERSION}`)) + ' ' + c.dim(c.gray(`[${badges}]`)));
   console.log(c.gray('  ─────────────────────────────────────────────────────────────────\n'));
@@ -1717,6 +1820,16 @@ async function main() {
       }
 
 
+      if (cmd === '/dashboard' || cmd === '/dash') {
+        printStatus('Building live Kyrexi dashboard...', '⏳', c.accent);
+        const dash = await buildDashboard(client, token);
+        printBox('KYREXI LIVE DASHBOARD', dash, c.accent);
+        process.stdout.write(`
+  ${c.bgBrand(' YOU ')} ${c.brand('› ')}`);
+        rl.on('line', onLineInput);
+        return;
+      }
+
       if (cmd === '/tools') {
         const names = Object.keys(Tools).sort();
         const grouped = names.map(name => {
@@ -1778,7 +1891,7 @@ async function main() {
         console.log(`  ${c.accent('│')}  Make this AI truly yours! Personalize the name, banner, and branding.      ${c.accent('│')}`);
         console.log(`  ${c.accent('│')}                                                                            ${c.accent('│')}`);
         console.log(`  ${c.accent('│')}  ${c.brand('1.')} Change AI Name (currently: ${c.bold(settings.customName || 'Kyrexi')})                               ${c.accent('│')}`);
-        console.log(`  ${c.accent('│')}  ${c.brand('2.')} Change Creator / Branding Line (currently: ${c.bold(settings.customCreator || 'Kyrexi Pro')})        ${c.accent('│')}`);
+        console.log(`  ${c.accent('│')}  ${c.brand('2.')} Change Creator / Branding Line (currently: ${c.bold(settings.customCreator || 'Kyrexi Pro • Creators: UDMODZ × THENUXOFC')})        ${c.accent('│')}`);
         console.log(`  ${c.accent('│')}  ${c.brand('3.')} Change Banner ASCII / Text                                   ${c.accent('│')}`);
         console.log(`  ${c.accent('│')}  ${c.brand('4.')} Reset to Default Kyrexi Branding                               ${c.accent('│')}`);
         console.log(`  ${c.accent('│')}  ${c.brand('5.')} Cancel / Exit Wizard                                          ${c.accent('│')}`);
@@ -1798,7 +1911,7 @@ async function main() {
             printStatus('Operation cancelled. AI Name was not changed.', ICONS.warn, c.yellow);
           }
         } else if (choiceClean === '2') {
-          const newCreator = await questionAsync(`\n  ${c.cyan('›')} Enter custom Creator/Branding Line (e.g. "UDMODZ Pro" or "JARVIS Pro"): `);
+          const newCreator = await questionAsync(`\n  ${c.cyan('›')} Enter custom Creator/Branding Line (e.g. "UDMODZ × THENUXOFC" or "Kyrexi Pro"): `);
           if (newCreator.trim()) {
             settings.customCreator = newCreator.trim();
             writeSettingsSafe(settings);
@@ -1984,6 +2097,7 @@ async function main() {
           `${c.brand('  /safe')}    ${c.gray(' Toggle extra dangerous-command protection')}`,
           `${c.brand('  /debug')}   ${c.gray(' Toggle debug logs')}`,
           `${c.brand('  /history')} ${c.gray(' Show recent local prompt history')}`,
+          `${c.brand('  /dashboard')} ${c.gray(' Show live CLI/project/server dashboard')}`,
           `${c.brand('  /tools')}   ${c.gray(' List available agent tools')}`,
           `${c.brand('  /doctor')}  ${c.gray(' Run connection/auth/runtime health checks')}`,
           `${c.brand('  /compact')} ${c.gray(' Toggle compact terminal output mode')}`,
