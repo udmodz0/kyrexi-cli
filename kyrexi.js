@@ -161,6 +161,7 @@ function listBackups(limit = 8) {
           path: fullPath,
           size: info.size,
           mtime: info.mtimeMs,
+          time: info.mtimeMs,
           updatedAt: new Date(info.mtimeMs).toLocaleString()
         };
       })
@@ -189,6 +190,79 @@ function trimForTerminal(text, max = 16000) {
 
 function safeJsonParse(text, fallback = null) {
   try { return JSON.parse(text); } catch { return fallback; }
+}
+
+
+function readSettingsSafe() {
+  try {
+    ensureKyrexiDirs();
+    return safeJsonParse(existsSync(SETTINGS_PATH) ? readFileSync(SETTINGS_PATH, 'utf8') : '{}', {}) || {};
+  } catch (e) {
+    logDebug('settings read failed:', e.message);
+    return {};
+  }
+}
+
+function writeSettingsSafe(next) {
+  try {
+    ensureKyrexiDirs();
+    writeFileSync(SETTINGS_PATH, JSON.stringify(next || {}, null, 2), 'utf8');
+    return true;
+  } catch (e) {
+    logDebug('settings write failed:', e.message);
+    return false;
+  }
+}
+
+function maskSecret(value = '') {
+  const s = String(value || '');
+  if (!s) return '(empty)';
+  if (s.length <= 8) return '********';
+  return `${s.slice(0, 4)}...${s.slice(-4)}`;
+}
+
+const ASCII_FONT = {
+  A: [" ▄▄▄▄ ", "█    █", "█▄▄▄▄█", "█    █", "█    █"],
+  B: ["▄▄▄▄▄ ", "█    █", "█████ ", "█    █", "█████ "],
+  C: [" ▄▄▄▄ ", "█     ", "█     ", "█     ", " ▀▀▀▀ "],
+  D: ["▄▄▄▄  ", "█   █ ", "█    █", "█   █ ", "████  "],
+  E: ["██████", "█     ", "████  ", "█     ", "██████"],
+  F: ["██████", "█     ", "████  ", "█     ", "█     "],
+  G: [" ▄▄▄▄ ", "█     ", "█  ▄▄█", "█    █", " ▀▀▀▀ "],
+  H: ["█    █", "█    █", "██████", "█    █", "█    █"],
+  I: ["██████", "  ██  ", "  ██  ", "  ██  ", "██████"],
+  J: ["██████", "    ██", "    ██", "█   ██", " ▀██▀ "],
+  K: ["█   ██", "█  ██ ", "████  ", "█  ██ ", "█   ██"],
+  L: ["█     ", "█     ", "█     ", "█     ", "██████"],
+  M: ["█    █", "██  ██", "█ ██ █", "█    █", "█    █"],
+  N: ["█    █", "██   █", "█ █  █", "█  █ █", "█    █"],
+  O: [" ▄▄▄▄ ", "█    █", "█    █", "█    █", " ▀▀▀▀ "],
+  P: ["█████ ", "█    █", "█████ ", "█     ", "█     "],
+  Q: [" ▄▄▄▄ ", "█    █", "█ █  █", "█  ▀▀█", " ▀▀▀▀▀"],
+  R: ["█████ ", "█    █", "█████ ", "█  ██ ", "█   ██"],
+  S: [" ▄▄▄▄ ", "█     ", " ▀▀▀▀▄", "     █", "█████▀"],
+  T: ["██████", "  ██  ", "  ██  ", "  ██  ", "  ██  "],
+  U: ["█    █", "█    █", "█    █", "█    █", " ▀██▀ "],
+  V: ["█    █", "█    █", " █  █ ", " █  █ ", "  ██  "],
+  W: ["█    █", "█    █", "█ ██ █", "██  ██", "█    █"],
+  X: ["█    █", " █  █ ", "  ██  ", " █  █ ", "█    █"],
+  Y: ["█    █", " █  █ ", "  ██  ", "  ██  ", "  ██  "],
+  Z: ["██████", "    █ ", "  █▀  ", " █    ", "██████"],
+  " ": ["      ", "      ", "      ", "      ", "      "],
+  "-": ["      ", "      ", "██████", "      ", "      "],
+  "!": ["  ██  ", "  ██  ", "  ██  ", "      ", "  ██  "],
+  ".": ["      ", "      ", "      ", "      ", "  ██  "],
+};
+
+function renderAsciiText(text) {
+  const cleanText = String(text || '').toUpperCase();
+  const fontHeight = 5;
+  const lines = Array(fontHeight).fill('');
+  for (let i = 0; i < cleanText.length; i++) {
+    const glyph = ASCII_FONT[cleanText[i]] || ASCII_FONT[' '];
+    for (let h = 0; h < fontHeight; h++) lines[h] += glyph[h] + '  ';
+  }
+  return '\n' + lines.map(line => line.trimEnd()).join('\n') + '\n';
 }
 
 function parseToolCall(rawCall) {
