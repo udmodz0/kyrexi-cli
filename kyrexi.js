@@ -839,12 +839,10 @@ function splitLineAnsi(line, maxVisibleWidth) {
 
   return chunks;
 }
-
 function printBox(title, content, color = c.brand) {
   const lines = content.split('\n');
   const cols = process.stdout.columns || 80;
   const maxWidth = Math.max(20, Math.min(cols - 10, 80));
-
   const processedLines = [];
   lines.forEach(l => {
     processedLines.push(...splitLineAnsi(l, maxWidth));
